@@ -942,11 +942,7 @@ function resetlessWindowMaxAge(window: QuotaWindow): number | undefined {
   if (window.kind === "weekly" || window.kind === "model") {
     return SEVEN_DAYS_MS;
   }
-  if (
-    window.kind === "session" ||
-    window.kind === "monthly" ||
-    window.kind === "credits"
-  ) {
+  if (window.kind === "session" || window.kind === "monthly") {
     return FIVE_HOURS_MS;
   }
   return undefined;
