@@ -1,0 +1,226 @@
+{
+  "generatedAt": "2026-09-22T20:05:38.109Z",
+  "schemaVersion": 5,
+  "providers": [
+    {
+      "provider": "claude",
+      "windows": [],
+      "state": {
+        "status": "error",
+        "stale": false,
+        "error": "keychain_presence_check_failed"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": []
+      }
+    },
+    {
+      "provider": "codex",
+      "windows": [],
+      "state": {
+        "status": "auth_required",
+        "stale": false,
+        "error": "Codex sign-in required"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": []
+      }
+    },
+    {
+      "provider": "cursor",
+      "windows": [],
+      "state": {
+        "status": "error",
+        "stale": false,
+        "error": "sqlite3_unavailable"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": []
+      }
+    },
+    {
+      "provider": "copilot",
+      "windows": [],
+      "state": {
+        "status": "auth_required",
+        "stale": false,
+        "error": "GitHub Copilot sign-in required"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": [],
+        "unresolvedWindowIds": []
+      }
+    },
+    {
+      "provider": "grok",
+      "windows": [],
+      "state": {
+        "status": "auth_required",
+        "stale": false,
+        "error": "Grok sign-in required",
+        "authStatus": "unusable"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": []
+      }
+    },
+    {
+      "provider": "kimi",
+      "windows": [],
+      "state": {
+        "status": "auth_required",
+        "stale": false,
+        "error": "kimi_credential_unavailable"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": []
+      }
+    },
+    {
+      "provider": "zai",
+      "windows": [],
+      "state": {
+        "status": "auth_required",
+        "stale": false,
+        "error": "zai_credential_unavailable"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": []
+      }
+    },
+    {
+      "provider": "agy",
+      "windows": [],
+      "state": {
+        "status": "error",
+        "stale": false,
+        "error": "Antigravity process discovery failed"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": []
+      }
+    },
+    {
+      "provider": "alibaba",
+      "windows": [],
+      "state": {
+        "status": "unavailable",
+        "stale": false,
+        "error": "bl_cli_unavailable"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": []
+      }
+    },
+    {
+      "provider": "opencode-go",
+      "windows": [],
+      "state": {
+        "status": "auth_required",
+        "stale": false,
+        "error": "opencode_go_credential_unavailable"
+      },
+      "quotaSemantics": {
+        "status": "partial",
+        "effectiveAvailability": [],
+        "unresolvedWindowIds": [
+          "rolling",
+          "weekly",
+          "monthly"
+        ]
+      }
+    },
+    {
+      "provider": "commandcode",
+      "windows": [],
+      "state": {
+        "status": "auth_required",
+        "stale": false,
+        "error": "commandcode_sign_in_required",
+        "authStatus": "unusable"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": []
+      }
+    },
+    {
+      "provider": "minimax",
+      "windows": [],
+      "state": {
+        "status": "auth_required",
+        "stale": false,
+        "error": "minimax_credential_unavailable"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": []
+      }
+    },
+    {
+      "provider": "mimo",
+      "windows": [],
+      "state": {
+        "status": "auth_required",
+        "stale": false,
+        "error": "mimo_credential_unavailable"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": [],
+        "unresolvedWindowIds": []
+      }
+    },
+    {
+      "provider": "deepseek",
+      "windows": [],
+      "state": {
+        "status": "auth_required",
+        "stale": false,
+        "error": "deepseek_credential_unavailable"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": [],
+        "unresolvedWindowIds": []
+      }
+    },
+    {
+      "provider": "openrouter",
+      "windows": [],
+      "state": {
+        "status": "auth_required",
+        "stale": false,
+        "error": "openrouter_credential_unavailable"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": [],
+        "unresolvedWindowIds": []
+      }
+    },
+    {
+      "provider": "elevenlabs",
+      "windows": [],
+      "state": {
+        "status": "auth_required",
+        "stale": false,
+        "error": "elevenlabs_credential_unavailable",
+        "authStatus": "unusable"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+bin: /Users/kunchen/.no-mistakes/worktrees/1c5c6552f798/01M35BC3FFSSQZH0ZBYF1MBA5E/dist/bin/quota-axi.js
+description: Report local agent-provider quota windows for routing-aware agents
+generatedAt: "2026-09-22T20:05:38.176Z"
+quota[0]:
+exhaustion[0]:
+attention[17]{provider,scope,kind,detail,remedy}:
+  claude,all,error,keychain_presence_check_failed,none
+  codex,all,auth_required,Codex sign-in required,none
+  cursor,all,error,sqlite3_unavailable,none
+  copilot,all,auth_required,GitHub Copilot sign-in required,none
+  grok,all,auth_required,Grok sign-in required (auth unusable),none
+  kimi,all,auth_required,kimi_credential_unavailable,none
+  zai,all,auth_required,zai_credential_unavailable,none
+  agy,all,error,Antigravity process discovery failed,none
+  alibaba,all,unavailable,bl_cli_unavailable,none
+  opencode-go,all,auth_required,opencode_go_credential_unavailable,none
+  opencode-go,all,unresolved_windows,rolling + weekly + monthly,none
+  commandcode,all,auth_required,commandcode_sign_in_required (auth unusable),none
+  minimax,all,auth_required,minimax_credential_unavailable,none
+  mimo,all,auth_required,mimo_credential_unavailable,none
+  deepseek,all,auth_required,deepseek_credential_unavailable,none
+  openrouter,all,auth_required,openrouter_credential_unavailable,none
+  elevenlabs,all,auth_required,elevenlabs_credential_unavailable (auth unusable),none
+help[1]:
+  Run `quota-axi --full` for windows, pace, reserve, and account evidence

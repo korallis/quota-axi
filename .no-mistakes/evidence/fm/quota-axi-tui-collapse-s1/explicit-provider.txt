@@ -1,0 +1,10 @@
+  quota-axi · 2026-09-22 13:05 PDT · 0 live · 1 not set up
+
+  ○ not set up · 1
+
+╭─ ○ zai ────────────────────────── signed out ─╮
+│                                               │
+│   zai credential unavailable                  │
+│   excluded from fleet totals                  │
+│                                               │
+╰───────────────────────────────────────────────╯

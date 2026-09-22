@@ -1,0 +1,86 @@
+PTY 120x100, exit 1
+
+=== INITIAL FOLDED FRAME ===
+  quota-axi · 2026-09-22 13:05 PDT · 0 live · 4 need attention · 12 not set up
+
+╭─ ○ claude ──────────────────────────── error ─╮  ╭─ ○ codex ──────────────────────── signed out ─╮
+│                                               │  │                                               │
+│   keychain presence check failed              │  │   Codex sign-in required                      │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+╭─ ○ cursor ──────────────────────────── error ─╮  ╭─ ○ agy ─────────────────────────────── error ─╮
+│                                               │  │                                               │
+│   sqlite3 unavailable                         │  │   Antigravity process discovery failed        │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+  ○ not set up  copilot · grok · kimi · zai · alibaba · opencode-go · commandcode · minimax · mimo · deepseek
+                openrouter · elevenlabs   quota-axi auth shows where each is read
+
+  Press q to quit · a show not set up · refreshing every 5m
+
+=== AFTER PRESSING a ===
+  quota-axi · 2026-09-22 13:05 PDT · 0 live · 4 need attention · 12 not set up
+
+╭─ ○ claude ──────────────────────────── error ─╮  ╭─ ○ codex ──────────────────────── signed out ─╮
+│                                               │  │                                               │
+│   keychain presence check failed              │  │   Codex sign-in required                      │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+╭─ ○ cursor ──────────────────────────── error ─╮  ╭─ ○ agy ─────────────────────────────── error ─╮
+│                                               │  │                                               │
+│   sqlite3 unavailable                         │  │   Antigravity process discovery failed        │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+  ○ not set up · 12
+
+╭─ ○ copilot ────────────────────── signed out ─╮  ╭─ ○ grok ───────────────────────── signed out ─╮
+│                                               │  │                                               │
+│   GitHub Copilot sign-in required             │  │   Grok sign-in required                       │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+╭─ ○ kimi ───────────────────────── signed out ─╮  ╭─ ○ zai ────────────────────────── signed out ─╮
+│                                               │  │                                               │
+│   kimi credential unavailable                 │  │   zai credential unavailable                  │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+╭─ ○ alibaba ───────────────────── unavailable ─╮  ╭─ ○ opencode-go ────────────────── signed out ─╮
+│                                               │  │                                               │
+│   bl cli unavailable                          │  │   opencode go credential unavailable          │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+╭─ ○ commandcode ────────────────── signed out ─╮  ╭─ ○ minimax ────────────────────── signed out ─╮
+│                                               │  │                                               │
+│   commandcode sign in required                │  │   minimax credential unavailable              │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+╭─ ○ mimo ───────────────────────── signed out ─╮  ╭─ ○ deepseek ───────────────────── signed out ─╮
+│                                               │  │                                               │
+│   mimo credential unavailable                 │  │   deepseek credential unavailable             │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+╭─ ○ openrouter ─────────────────── signed out ─╮  ╭─ ○ elevenlabs ─────────────────── signed out ─╮
+│                                               │  │                                               │
+│   openrouter credential unavailable           │  │   elevenlabs credential unavailable           │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+  Press q to quit · a hide not set up · refreshing every 5m

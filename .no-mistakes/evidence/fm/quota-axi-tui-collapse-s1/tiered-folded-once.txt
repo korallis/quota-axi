@@ -1,0 +1,20 @@
+  quota-axi · 2026-09-22 13:06 PDT · 1 live · 3 need attention · 12 not set up
+
+╭─ ● cursor ──────────────────── cache · stale ─╮  ╭─ ○ claude ──────────────────────────── error ─╮
+│                                               │  │                                               │
+│   stale · effective unknown  runway unknown   │  │   keychain presence check failed              │
+│   ─────────────────────────────────────────   │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+│   week    ━━━━━━━━━━━━━━━━╸─────  75%  6d 15h │  │                                               │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+╭─ ○ codex ──────────────────────── signed out ─╮  ╭─ ○ agy ─────────────────────────────── error ─╮
+│                                               │  │                                               │
+│   Codex sign-in required                      │  │   Antigravity process discovery failed        │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+  ○ not set up  copilot · grok · kimi · zai · alibaba · opencode-go · commandcode · minimax · mimo
+                deepseek · openrouter · elevenlabs   quota-axi auth shows where each is read

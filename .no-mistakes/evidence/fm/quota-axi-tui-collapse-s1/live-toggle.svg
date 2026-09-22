@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="999" viewBox="0 0 1800 999">
+<rect width="100%" height="100%" fill="#11111b"/>
+<style>text{font-family:Menlo,Monaco,"Courier New",monospace;font-size:11px;fill:#cdd6f4}.title{font-size:16px;font-weight:bold;fill:#89dceb}.hint{fill:#a6adc8}</style>
+<text x="24" y="28" class="title">Initial folded frame</text><text x="920" y="28" class="title">After pressing a</text>
+<line x1="900" y1="12" x2="900" y2="100%" stroke="#313244"/>
+<text x="24" y="54" class="hint">  quota-axi · 2026-09-22 13:05 PDT · 0 live · 4 need attention · 12 not set up</text>
+<text x="24" y="69"></text>
+<text x="24" y="84">╭─ ○ claude ──────────────────────────── error ─╮  ╭─ ○ codex ──────────────────────── signed out ─╮</text>
+<text x="24" y="99">│                                               │  │                                               │</text>
+<text x="24" y="114">│   keychain presence check failed              │  │   Codex sign-in required                      │</text>
+<text x="24" y="129">│   excluded from fleet totals                  │  │   excluded from fleet totals                  │</text>
+<text x="24" y="144">│                                               │  │                                               │</text>
+<text x="24" y="159">╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯</text>
+<text x="24" y="174"></text>
+<text x="24" y="189">╭─ ○ cursor ──────────────────────────── error ─╮  ╭─ ○ agy ─────────────────────────────── error ─╮</text>
+<text x="24" y="204">│                                               │  │                                               │</text>
+<text x="24" y="219">│   sqlite3 unavailable                         │  │   Antigravity process discovery failed        │</text>
+<text x="24" y="234">│   excluded from fleet totals                  │  │   excluded from fleet totals                  │</text>
+<text x="24" y="249">│                                               │  │                                               │</text>
+<text x="24" y="264">╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯</text>
+<text x="24" y="279"></text>
+<text x="24" y="294" class="hint">  ○ not set up  copilot · grok · kimi · zai · alibaba · opencode-go · commandcode · minimax · mimo · deepseek</text>
+<text x="24" y="309">                openrouter · elevenlabs   quota-axi auth shows where each is read</text>
+<text x="24" y="324"></text>
+<text x="24" y="339" class="hint">  Press q to quit · a show not set up · refreshing every 5m</text>
+<text x="920" y="54" class="hint">  quota-axi · 2026-09-22 13:05 PDT · 0 live · 4 need attention · 12 not set up</text>
+<text x="920" y="69"></text>
+<text x="920" y="84">╭─ ○ claude ──────────────────────────── error ─╮  ╭─ ○ codex ──────────────────────── signed out ─╮</text>
+<text x="920" y="99">│                                               │  │                                               │</text>
+<text x="920" y="114">│   keychain presence check failed              │  │   Codex sign-in required                      │</text>
+<text x="920" y="129">│   excluded from fleet totals                  │  │   excluded from fleet totals                  │</text>
+<text x="920" y="144">│                                               │  │                                               │</text>
+<text x="920" y="159">╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯</text>
+<text x="920" y="174"></text>
+<text x="920" y="189">╭─ ○ cursor ──────────────────────────── error ─╮  ╭─ ○ agy ─────────────────────────────── error ─╮</text>
+<text x="920" y="204">│                                               │  │                                               │</text>
+<text x="920" y="219">│   sqlite3 unavailable                         │  │   Antigravity process discovery failed        │</text>
+<text x="920" y="234">│   excluded from fleet totals                  │  │   excluded from fleet totals                  │</text>
+<text x="920" y="249">│                                               │  │                                               │</text>
+<text x="920" y="264">╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯</text>
+<text x="920" y="279"></text>
+<text x="920" y="294" class="hint">  ○ not set up · 12</text>
+<text x="920" y="309"></text>
+<text x="920" y="324">╭─ ○ copilot ────────────────────── signed out ─╮  ╭─ ○ grok ───────────────────────── signed out ─╮</text>
+<text x="920" y="339">│                                               │  │                                               │</text>
+<text x="920" y="354">│   GitHub Copilot sign-in required             │  │   Grok sign-in required                       │</text>
+<text x="920" y="369">│   excluded from fleet totals                  │  │   excluded from fleet totals                  │</text>
+<text x="920" y="384">│                                               │  │                                               │</text>
+<text x="920" y="399">╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯</text>
+<text x="920" y="414"></text>
+<text x="920" y="429">╭─ ○ kimi ───────────────────────── signed out ─╮  ╭─ ○ zai ────────────────────────── signed out ─╮</text>
+<text x="920" y="444">│                                               │  │                                               │</text>
+<text x="920" y="459">│   kimi credential unavailable                 │  │   zai credential unavailable                  │</text>
+<text x="920" y="474">│   excluded from fleet totals                  │  │   excluded from fleet totals                  │</text>
+<text x="920" y="489">│                                               │  │                                               │</text>
+<text x="920" y="504">╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯</text>
+<text x="920" y="519"></text>
+<text x="920" y="534">╭─ ○ alibaba ───────────────────── unavailable ─╮  ╭─ ○ opencode-go ────────────────── signed out ─╮</text>
+<text x="920" y="549">│                                               │  │                                               │</text>
+<text x="920" y="564">│   bl cli unavailable                          │  │   opencode go credential unavailable          │</text>
+<text x="920" y="579">│   excluded from fleet totals                  │  │   excluded from fleet totals                  │</text>
+<text x="920" y="594">│                                               │  │                                               │</text>
+<text x="920" y="609">╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯</text>
+<text x="920" y="624"></text>
+<text x="920" y="639">╭─ ○ commandcode ────────────────── signed out ─╮  ╭─ ○ minimax ────────────────────── signed out ─╮</text>
+<text x="920" y="654">│                                               │  │                                               │</text>
+<text x="920" y="669">│   commandcode sign in required                │  │   minimax credential unavailable              │</text>
+<text x="920" y="684">│   excluded from fleet totals                  │  │   excluded from fleet totals                  │</text>
+<text x="920" y="699">│                                               │  │                                               │</text>
+<text x="920" y="714">╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯</text>
+<text x="920" y="729"></text>
+<text x="920" y="744">╭─ ○ mimo ───────────────────────── signed out ─╮  ╭─ ○ deepseek ───────────────────── signed out ─╮</text>
+<text x="920" y="759">│                                               │  │                                               │</text>
+<text x="920" y="774">│   mimo credential unavailable                 │  │   deepseek credential unavailable             │</text>
+<text x="920" y="789">│   excluded from fleet totals                  │  │   excluded from fleet totals                  │</text>
+<text x="920" y="804">│                                               │  │                                               │</text>
+<text x="920" y="819">╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯</text>
+<text x="920" y="834"></text>
+<text x="920" y="849">╭─ ○ openrouter ─────────────────── signed out ─╮  ╭─ ○ elevenlabs ─────────────────── signed out ─╮</text>
+<text x="920" y="864">│                                               │  │                                               │</text>
+<text x="920" y="879">│   openrouter credential unavailable           │  │   elevenlabs credential unavailable           │</text>
+<text x="920" y="894">│   excluded from fleet totals                  │  │   excluded from fleet totals                  │</text>
+<text x="920" y="909">│                                               │  │                                               │</text>
+<text x="920" y="924">╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯</text>
+<text x="920" y="939"></text>
+<text x="920" y="954" class="hint">  Press q to quit · a hide not set up · refreshing every 5m</text>
+</svg>
