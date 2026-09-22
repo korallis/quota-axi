@@ -104,6 +104,8 @@ const ENV_KEYS = [
   "GITHUB_COPILOT_APPS_JSON",
   "GH_CONFIG_DIR",
   "ELEVENLABS_API_KEY",
+  "META_API_KEY",
+  "XDG_CONFIG_HOME",
   "QUOTA_AXI_OPENCODE_GO_PI_AUTH",
   "COPILOT_HOME",
 ] as const;
@@ -140,6 +142,8 @@ beforeEach(() => {
   delete process.env.GROK_AUTH_JSON;
   delete process.env.GROK_AUTH_PATH;
   delete process.env.ELEVENLABS_API_KEY;
+  delete process.env.META_API_KEY;
+  process.env.XDG_CONFIG_HOME = join(tempDir, "config");
   mkdirSync(process.env.CODEX_HOME, { recursive: true });
   vi.doMock("../src/lib/process.js", async (importOriginal) => ({
     ...(await importOriginal<typeof import("../src/lib/process.js")>()),
@@ -516,6 +520,111 @@ describe("credential source contract", { timeout: 30_000 }, () => {
       expect(api.keys).toEqual(["elevenlabs-probe-fixture"]);
       expect(bearers).toEqual([""]);
       expect(result.state.status).toBe("auth_required");
+    });
+  });
+  /**
+   * Muse has two sources: the Muse CLI's own `auth.json` login and an exported
+   * `META_API_KEY`. An absent store is not a degraded one, a present but
+   * unusable one is a credential that exists, and nothing unusable - nor the
+   * store's refresh token - is ever sent.
+   */
+  describe("muse", () => {
+    const store = "muse:auth.json";
+    const env = "env:META_API_KEY";
+
+    function writeMuseStore(contents: unknown): void {
+      const dir = join(process.env.XDG_CONFIG_HOME!, "muse");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "auth.json"), JSON.stringify(contents), {
+        mode: 0o600,
+      });
+    }
+
+    /** Records every request, so "never sent" is checked rather than assumed. */
+    function stubRejectingKeyEndpoint(): { requests: string[] } {
+      const requests: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_input: unknown, init?: RequestInit) => {
+          requests.push(
+            JSON.stringify([
+              new Headers(init?.headers).get("authorization"),
+              init?.body,
+            ]),
+          );
+          return new Response(null, { status: 401 });
+        }),
+      );
+      return { requests };
+    }
+
+    it("leaves absent sources unmarked, and sends nothing", async () => {
+      const api = stubRejectingKeyEndpoint();
+
+      const result = await readQuota("muse");
+
+      for (const source of [store, env]) {
+        const attempts = attemptsFor(result, source);
+        expect(attempts.length).toBeGreaterThan(0);
+        for (const attempt of attempts)
+          expect(attempt.credentialPresent).toBeUndefined();
+      }
+      expect(api.requests).toEqual([]);
+      expect(result.state.status).toBe("auth_required");
+    });
+
+    it.each([
+      ["a blank value", "   "],
+      ["an environment reference", "$META_API_KEY"],
+      ["a command reference", "!op read op://vault/key"],
+      ["a control byte", "meta-\u0007-fixture"],
+    ])("never sends %s from META_API_KEY", async (_label, value) => {
+      process.env.META_API_KEY = value;
+      const api = stubRejectingKeyEndpoint();
+
+      const result = await readQuota("muse");
+
+      expect(api.requests).toEqual([]);
+      expect(result.state.status).toBe("auth_required");
+    });
+
+    it.each(BROKEN_ENTRIES)(
+      "marks a present but unusable meta entry (%s) as a credential that exists, then hands over",
+      async (_label, entry) => {
+        writeMuseStore({ providers: { meta: entry } });
+        process.env.META_API_KEY = "meta-contract-fixture";
+        const api = stubRejectingKeyEndpoint();
+
+        const result = await readQuota("muse");
+
+        for (const attempt of attemptsFor(result, store))
+          expect(attempt.credentialPresent).toBe(true);
+        expect(api.requests).toEqual([
+          JSON.stringify([
+            "Bearer meta-contract-fixture",
+            JSON.stringify({ onboard: false }),
+          ]),
+        ]);
+      },
+    );
+
+    it("sends only the stored access token, never its refresh token", async () => {
+      writeMuseStore({
+        providers: {
+          meta: {
+            access_token: "muse-contract-access",
+            refresh_token: "must-not-be-read",
+          },
+        },
+      });
+      const api = stubRejectingKeyEndpoint();
+
+      const result = await readQuota("muse");
+
+      expect(api.requests).toHaveLength(1);
+      expect(api.requests[0]).toContain("Bearer muse-contract-access");
+      expect(api.requests.join("")).not.toContain("must-not-be-read");
+      expect(result.state.authStatus).toBe("expired_refreshable");
     });
   });
 });

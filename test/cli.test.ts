@@ -36,6 +36,8 @@ const originalMinimaxProvider = PROVIDERS.minimax;
 const originalMimoProvider = PROVIDERS.mimo;
 const originalDeepSeekProvider = PROVIDERS.deepseek;
 const originalOpenRouterProvider = PROVIDERS.openrouter;
+const originalElevenLabsProvider = PROVIDERS.elevenlabs;
+const originalMuseProvider = PROVIDERS.muse;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
 const originalCodexHome = process.env.CODEX_HOME;
@@ -63,6 +65,8 @@ afterEach(() => {
   PROVIDERS.mimo = originalMimoProvider;
   PROVIDERS.deepseek = originalDeepSeekProvider;
   PROVIDERS.openrouter = originalOpenRouterProvider;
+  PROVIDERS.elevenlabs = originalElevenLabsProvider;
+  PROVIDERS.muse = originalMuseProvider;
   vi.unstubAllGlobals();
   if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
@@ -99,6 +103,7 @@ describe("CLI flag parsing", () => {
       "deepseek",
       "openrouter",
       "elevenlabs",
+      "muse",
     ]);
   });
 
@@ -142,6 +147,7 @@ describe("CLI flag parsing", () => {
           "deepseek",
           "openrouter",
           "elevenlabs",
+          "muse",
         ],
         json: true,
         full: true,
@@ -1581,6 +1587,7 @@ describe("default TOON decision blocks", () => {
       emptyFreshQuota("openrouter", "OpenRouter"),
     );
     PROVIDERS.elevenlabs = providerWithQuota(freshElevenLabsQuota());
+    PROVIDERS.muse = providerWithQuota(freshMuseQuota());
 
     const output = await capture([]);
     const named = new Set([
@@ -1602,6 +1609,7 @@ describe("default TOON decision blocks", () => {
       "kimi",
       "mimo",
       "minimax",
+      "muse",
       "opencode-go",
       "openrouter",
       "zai",
@@ -2824,6 +2832,42 @@ function freshElevenLabsQuota(): ProviderQuota {
       authStatus: "usable",
       refreshedAt: "2026-07-06T18:10:00Z",
       sourcesTried: ["env:ELEVENLABS_API_KEY"],
+    },
+  };
+}
+
+function freshMuseQuota(): ProviderQuota {
+  return {
+    provider: "muse",
+    label: "Muse",
+    source: "api",
+    plan: "pro",
+    windows: [
+      {
+        id: "five_hour",
+        label: "session",
+        kind: "session",
+        windowSeconds: 18_000,
+        percentUsed: 42.5,
+        percentRemaining: 57.5,
+        resetsAt: "2026-07-06T20:00:00.000Z",
+      },
+      {
+        id: "weekly",
+        label: "week",
+        kind: "weekly",
+        windowSeconds: 604_800,
+        percentUsed: 17,
+        percentRemaining: 83,
+        resetsAt: "2026-07-09T12:00:00.000Z",
+      },
+    ],
+    state: {
+      status: "fresh",
+      stale: false,
+      authStatus: "usable",
+      refreshedAt: "2026-07-06T18:10:00Z",
+      sourcesTried: ["muse:auth.json", "env:META_API_KEY"],
     },
   };
 }

@@ -14,7 +14,8 @@ export type ProviderId =
   | "mimo"
   | "deepseek"
   | "openrouter"
-  | "elevenlabs";
+  | "elevenlabs"
+  | "muse";
 
 export const PROVIDER_IDS = [
   "claude",
@@ -33,6 +34,7 @@ export const PROVIDER_IDS = [
   "deepseek",
   "openrouter",
   "elevenlabs",
+  "muse",
 ] as const satisfies readonly ProviderId[];
 
 export type ProviderSource =

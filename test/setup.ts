@@ -29,3 +29,12 @@ process.env.COPILOT_HOME = join(
   tmpdir(),
   `quota-axi-test-no-copilot-config-${process.pid}-${randomUUID()}`,
 );
+
+// No test may read this machine's real Muse CLI login or exported key: every
+// Muse key-endpoint request also issues an API key on the real account. Tests
+// that exercise the store set their own sandbox directory.
+delete process.env.META_API_KEY;
+process.env.XDG_CONFIG_HOME = join(
+  tmpdir(),
+  `quota-axi-test-no-xdg-config-${process.pid}-${randomUUID()}`,
+);
