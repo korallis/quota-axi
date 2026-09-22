@@ -1,0 +1,11 @@
+bin: /Users/kunchen/.no-mistakes/worktrees/1c5c6552f798/01M35CNFVN1H5YSWJH024EJ5WB/dist/bin/quota-axi.js
+description: Report local agent-provider quota windows for routing-aware agents
+generatedAt: "2026-09-22T20:35:45.633Z"
+quota[0]:
+exhaustion[0]:
+attention[1]{provider,scope,kind,detail,remedy}:
+  kimi,all,no_quota,no measurable scope (auth usable),none
+help[1]:
+  Run `quota-axi --full` for windows, pace, reserve, and account evidence
+
+[exit status: 0]

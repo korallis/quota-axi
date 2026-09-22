@@ -1,0 +1,97 @@
+{
+  "generatedAt": "2026-09-22T20:35:45.634Z",
+  "schemaVersion": 5,
+  "providers": [
+    {
+      "provider": "kimi",
+      "label": "Kimi",
+      "source": "api",
+      "windows": [
+        {
+          "id": "five_hour",
+          "label": "session",
+          "kind": "session",
+          "percentUsed": 25,
+          "percentRemaining": 75,
+          "windowSeconds": 18000,
+          "resetsAt": "2099-01-01T05:00:00.000Z",
+          "pace": {
+            "status": "unknown",
+            "reason": "future_cycle_start"
+          }
+        },
+        {
+          "id": "weekly",
+          "label": "week",
+          "kind": "weekly",
+          "percentUsed": 40,
+          "percentRemaining": 60,
+          "windowSeconds": 604800,
+          "resetsAt": "2099-01-08T00:00:00.000Z",
+          "pace": {
+            "status": "unknown",
+            "reason": "future_cycle_start"
+          }
+        }
+      ],
+      "state": {
+        "status": "fresh",
+        "stale": false,
+        "refreshedAt": "2026-09-22T20:35:45.634Z",
+        "sourcesTried": [
+          "pi:kimi-coding",
+          "kimi-code-cli"
+        ]
+      },
+      "attempts": [
+        {
+          "source": "pi:kimi-coding",
+          "status": "success"
+        },
+        {
+          "source": "kimi-code-cli",
+          "status": "success"
+        }
+      ],
+      "quotaSemantics": {
+        "status": "known",
+        "description": "Kimi's weekly, five-hour, and monthly-total account windows jointly bound every model, so effective remaining is the minimum across the named windows. The monthly code window is the code-typed share of that monthly total rather than a separate allowance, so it adds no bound.",
+        "effectiveAvailability": [
+          {
+            "scope": "all_models",
+            "status": "known",
+            "effectivePercentRemaining": 60,
+            "boundedBy": [
+              "five_hour",
+              "weekly"
+            ],
+            "limitingWindowIds": [
+              "weekly"
+            ],
+            "pace": {
+              "status": "unknown",
+              "unknownWindowIds": [
+                "five_hour",
+                "weekly"
+              ]
+            },
+            "runway": {
+              "status": "unknown",
+              "unmeasurableWindowIds": [
+                "five_hour",
+                "weekly"
+              ]
+            },
+            "selection": {
+              "status": "unknown",
+              "unmeasurableWindowIds": [
+                "five_hour",
+                "weekly"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
