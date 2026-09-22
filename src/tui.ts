@@ -168,7 +168,7 @@ export function renderQuotaTui(
   const lines: Line[] = [];
   lines.push([
     {
-      text: `  ${headerText(response, tiers, timeZone)}`,
+      text: `  ${headerText(response, tiers, columns - 2, timeZone)}`,
       style: "dim",
     },
   ]);
@@ -283,20 +283,30 @@ function isLive(provider: ProviderQuota): boolean {
   return provider.state.status === "fresh" || provider.state.status === "stale";
 }
 
+/**
+ * The fleet summary, never wider than the report. Every tier count is
+ * required reading, so a header that does not fit gives up the timestamp -
+ * its time zone, then its date, then the clock - rather than a count.
+ */
 function headerText(
   response: QuotaAxiResponse,
   tiers: Record<ProviderPresence, ProviderQuota[]>,
+  width: number,
   timeZone?: string,
 ): string {
   const attention = tiers.attention.length;
-  const parts = [
-    "quota-axi",
-    formatHeaderTime(response.generatedAt, timeZone),
+  const counts = [
     `${tiers.live.length} live`,
     `${attention} ${attention === 1 ? "needs" : "need"} attention`,
     `${tiers.absent.length} not set up`,
   ];
-  return parts.filter(Boolean).join(" · ");
+  const candidates = headerTimes(response.generatedAt, timeZone).map((time) =>
+    ["quota-axi", ...(time ? [time] : []), ...counts].join(" · "),
+  );
+  return (
+    candidates.find((line) => displayWidth(line) <= width) ??
+    candidates[candidates.length - 1]
+  );
 }
 
 type Card = Line[];
@@ -869,9 +879,9 @@ export function formatCountdown(seconds: number): string {
   return minutes > 0 ? `${minutes}m` : "<1m";
 }
 
-function formatHeaderTime(iso: string, timeZone?: string): string {
+function headerTimes(iso: string, timeZone?: string): string[] {
   const ms = Date.parse(iso);
-  if (!Number.isFinite(ms)) return iso;
+  if (!Number.isFinite(ms)) return [iso, ""];
   const parts = new Intl.DateTimeFormat("en-US", {
     ...(timeZone ? { timeZone } : {}),
     year: "numeric",
@@ -885,7 +895,14 @@ function formatHeaderTime(iso: string, timeZone?: string): string {
   const get = (type: string): string =>
     parts.find((part) => part.type === type)?.value ?? "";
   const hour = get("hour") === "24" ? "00" : get("hour");
-  return `${get("year")}-${get("month")}-${get("day")} ${hour}:${get("minute")} ${get("timeZoneName")}`.trim();
+  const date = `${get("year")}-${get("month")}-${get("day")}`;
+  const clock = `${hour}:${get("minute")}`;
+  return [
+    `${date} ${clock} ${get("timeZoneName")}`.trim(),
+    `${date} ${clock}`,
+    clock,
+    "",
+  ];
 }
 
 function fullFooterLines(provider: ProviderQuota, width: number): string[] {

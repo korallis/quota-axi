@@ -10,6 +10,7 @@ import {
 import { withQuotaSemantics } from "../src/interpretation.js";
 import { providerPresence } from "../src/lib/source-attempts.js";
 import { redactedResponse } from "../src/render.js";
+import { PROVIDER_IDS } from "../src/types.js";
 import type { ProviderQuota, QuotaAxiResponse } from "../src/types.js";
 import {
   claudeProvider,
@@ -1257,6 +1258,27 @@ describe("providers that are not set up", () => {
       "",
     ]);
     expect(expanded[4]).toMatch(/^╭─ ○ zai .*╭─ ○ mimo /);
+  });
+
+  it("gives up the timestamp before a tier count in a narrow terminal", () => {
+    const response: QuotaAxiResponse = {
+      generatedAt: GENERATED_AT,
+      schemaVersion: 5,
+      providers: PROVIDER_IDS.map((provider) => notSetUp(provider)),
+    };
+    const zone = { timeZone: "Australia/Adelaide" };
+    const wide = frame(response, { ...zone, columns: 120 });
+    const narrow = frame(response, { ...zone, columns: 80 });
+
+    // The unabridged header does not fit the narrowest supported terminal.
+    expect(displayColumns(wide[0])).toBeGreaterThan(80);
+    expect(displayColumns(narrow[0])).toBeLessThanOrEqual(80);
+    // The time zone is spent to make room; every count survives.
+    expect(narrow[0]).toMatch(
+      new RegExp(
+        `^ {2}quota-axi · \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2} · 0 live · 0 need attention · ${PROVIDER_IDS.length} not set up$`,
+      ),
+    );
   });
 
   it("names every tier in the header, including the ones that are empty", () => {
