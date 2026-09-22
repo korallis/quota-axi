@@ -1,0 +1,41 @@
+{
+  "reading": "reset-boundary",
+  "status": "fresh",
+  "windows": [
+    {
+      "id": "five_hour",
+      "percentRemaining": 52
+    },
+    {
+      "id": "seven_day",
+      "percentRemaining": 98,
+      "burnMultiple": 1.5234
+    },
+    {
+      "id": "model:fable",
+      "percentRemaining": 100,
+      "burnMultiple": 0
+    }
+  ]
+}
+{
+  "reading": "later-reading",
+  "status": "fresh",
+  "windows": [
+    {
+      "id": "five_hour",
+      "percentRemaining": 100,
+      "burnMultiple": 0
+    },
+    {
+      "id": "seven_day",
+      "percentRemaining": 39,
+      "burnMultiple": 1.1888
+    },
+    {
+      "id": "model:fable",
+      "percentRemaining": 6,
+      "burnMultiple": 1.8319
+    }
+  ]
+}

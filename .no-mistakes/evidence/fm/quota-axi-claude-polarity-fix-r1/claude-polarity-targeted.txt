@@ -1,0 +1,17 @@
+[?25l
+ RUN  v3.0.0 /Users/kunchen/.no-mistakes/worktrees/1c5c6552f798/01M35N9WS2ZMM0FPMNB6GN6BA8
+
+ ✓ test/providers/claude-polarity.test.ts > Claude utilization polarity > reads a weekly window 26 minutes after its reset as nearly full
+ ✓ test/providers/claude-polarity.test.ts > Claude utilization polarity > publishes remaining for the second observed limits[] reading
+ ✓ test/providers/claude-polarity.test.ts > Claude utilization polarity > keeps OAuth utilization, limits[] percent, and native header polarity aligned
+ ✓ test/providers/claude-polarity.test.ts > Claude polarity end to end > publishes the reset-boundary reading as nearly full quota
+ ✓ test/providers/claude-polarity.test.ts > Claude polarity end to end > publishes the second observed reading's remaining percentages
+ ✓ test/providers/claude-polarity.test.ts > Claude polarity end to end > never republishes a snapshot cached under the inverted polarity
+ ✓ test/providers/claude-polarity.test.ts > Claude polarity end to end > still serves a stale snapshot this version cached
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  16:11:56
+   Duration  853ms (transform 469ms, setup 105ms, collect 549ms, tests 29ms, environment 0ms, prepare 33ms)
+
+[?25h

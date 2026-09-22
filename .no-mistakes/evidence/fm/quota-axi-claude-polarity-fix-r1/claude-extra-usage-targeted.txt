@@ -1,0 +1,11 @@
+[?25l
+ RUN  v3.0.0 /Users/kunchen/.no-mistakes/worktrees/1c5c6552f798/01M35N9WS2ZMM0FPMNB6GN6BA8
+
+ ✓ test/providers/claude.test.ts > Claude quota parsing > treats extra-usage utilization as percent used
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 11 skipped (12)
+   Start at  16:12:25
+   Duration  916ms (transform 259ms, setup 15ms, collect 333ms, tests 4ms, environment 0ms, prepare 93ms)
+
+[?25h
