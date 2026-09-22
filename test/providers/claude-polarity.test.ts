@@ -1,12 +1,22 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readCachedProvider, writeCachedProviders } from "../../src/cache.js";
 import { quotaCommand } from "../../src/commands.js";
+import { claudeProfileLocations } from "../../src/lib/claude-profile.js";
+import { cacheFilePath } from "../../src/lib/fs.js";
 import { computeWindowPace } from "../../src/pace.js";
 import { normalizeClaudeApiUsage } from "../../src/providers/claude.js";
 import { parseClaudeNativeDebug } from "../../src/providers/claude-native-quota.js";
-import type { QuotaAxiResponse } from "../../src/types.js";
+import type { ProviderQuota, QuotaAxiResponse } from "../../src/types.js";
 
 /**
  * Observed vendor payloads from the 0.1.50 polarity inversion (PR #248).
@@ -222,11 +232,66 @@ describe("Claude polarity end to end", () => {
     );
   }
 
-  async function publishedClaude(
-    payload: unknown,
-  ): Promise<QuotaAxiResponse["providers"][number]> {
-    useClaudeOauthHome();
-    stubClaudeUsage(payload);
+  function stubUnreachableVendor(): void {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("network unavailable");
+      }),
+    );
+  }
+
+  /**
+   * The cache record 0.1.50 persisted for this same profile: its windows carry
+   * the inverted polarity, under the credential-context identity that release
+   * stamped them with.
+   */
+  function cacheInvertedSnapshot(): void {
+    writeCachedProviders([invertedClaudeSnapshot()]);
+    const { configDir, keychainService } = claudeProfileLocations();
+    const cache = JSON.parse(readFileSync(cacheFilePath(), "utf8")) as {
+      providers: Array<{ credentialContext?: string }>;
+    };
+    cache.providers[0]!.credentialContext = createHash("sha256")
+      .update(
+        JSON.stringify([
+          "claude-profile-v2",
+          resolve(configDir),
+          keychainService,
+        ]),
+      )
+      .digest("hex");
+    writeFileSync(cacheFilePath(), JSON.stringify(cache));
+  }
+
+  function invertedClaudeSnapshot(): ProviderQuota {
+    return {
+      provider: "claude",
+      label: "Claude",
+      source: "oauth",
+      windows: [
+        {
+          id: "seven_day",
+          label: "week",
+          kind: "weekly",
+          percentUsed: 98,
+          percentRemaining: 2,
+          resetsAt: "2026-09-29T21:00:00Z",
+          windowSeconds: 604_800,
+        },
+      ],
+      state: {
+        status: "fresh",
+        stale: false,
+        refreshedAt: READING_A.generatedAt,
+        sourcesTried: ["oauth-file"],
+      },
+    };
+  }
+
+  async function publishedClaude(): Promise<
+    QuotaAxiResponse["providers"][number]
+  > {
     const json = JSON.parse(
       await quotaCommand(
         ["--provider", "claude", "--json", "--no-credential-refresh"],
@@ -238,8 +303,10 @@ describe("Claude polarity end to end", () => {
 
   it("publishes the reset-boundary reading as nearly full quota", async () => {
     readAt(READING_A.generatedAt);
+    useClaudeOauthHome();
+    stubClaudeUsage(READING_A.payload);
 
-    const claude = await publishedClaude(READING_A.payload);
+    const claude = await publishedClaude();
 
     expect(claude.state).toMatchObject({ status: "fresh", stale: false });
     expect(claude.windows).toMatchObject([
@@ -255,13 +322,47 @@ describe("Claude polarity end to end", () => {
 
   it("publishes the second observed reading's remaining percentages", async () => {
     readAt(READING_A.generatedAt);
+    useClaudeOauthHome();
+    stubClaudeUsage(READING_B.payload);
 
-    const claude = await publishedClaude(READING_B.payload);
+    const claude = await publishedClaude();
 
     expect(claude.windows).toMatchObject([
       { id: "five_hour", percentRemaining: 100 },
       { id: "seven_day", percentRemaining: 39 },
       { id: "model:fable", percentRemaining: 6 },
+    ]);
+  });
+
+  it("never republishes a snapshot cached under the inverted polarity", async () => {
+    readAt(READING_A.generatedAt);
+    useClaudeOauthHome();
+    cacheInvertedSnapshot();
+    stubUnreachableVendor();
+
+    const claude = await publishedClaude();
+
+    expect(claude.state).toMatchObject({ stale: false });
+    expect(claude.windows).toEqual([]);
+    expect(readCachedProvider("claude")?.windows[0]).toMatchObject({
+      percentRemaining: 2,
+    });
+  });
+
+  it("still serves a stale snapshot this version cached", async () => {
+    readAt(READING_A.generatedAt);
+    useClaudeOauthHome();
+    stubClaudeUsage(READING_A.payload);
+    await publishedClaude();
+    stubUnreachableVendor();
+
+    const claude = await publishedClaude();
+
+    expect(claude.state).toMatchObject({ status: "stale", stale: true });
+    expect(claude.windows).toMatchObject([
+      { id: "five_hour", percentRemaining: 52 },
+      { id: "seven_day", percentRemaining: 98 },
+      { id: "model:fable", percentRemaining: 100 },
     ]);
   });
 });
