@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { quotaCommand } from "../../src/commands.js";
 import { computeWindowPace } from "../../src/pace.js";
 import { normalizeClaudeApiUsage } from "../../src/providers/claude.js";
 import { parseClaudeNativeDebug } from "../../src/providers/claude-native-quota.js";
+import type { QuotaAxiResponse } from "../../src/types.js";
 
 /**
  * Observed vendor payloads from the 0.1.50 polarity inversion (PR #248).
@@ -130,5 +135,133 @@ describe("Claude utilization polarity", () => {
         expect.objectContaining({ id: "seven_day", percentUsed: 40 }),
       ]),
     });
+  });
+});
+
+describe("Claude polarity end to end", () => {
+  const originalPlatform = Object.getOwnPropertyDescriptor(
+    process,
+    "platform",
+  )!;
+  const originalEnv = {
+    home: process.env.HOME,
+    userProfile: process.env.USERPROFILE,
+    cacheHome: process.env.XDG_CACHE_HOME,
+    configDir: process.env.CLAUDE_CONFIG_DIR,
+    envToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
+  };
+  let tempHome: string | undefined;
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    Object.defineProperty(process, "platform", originalPlatform);
+    restoreEnv("HOME", originalEnv.home);
+    restoreEnv("USERPROFILE", originalEnv.userProfile);
+    restoreEnv("XDG_CACHE_HOME", originalEnv.cacheHome);
+    restoreEnv("CLAUDE_CONFIG_DIR", originalEnv.configDir);
+    restoreEnv("CLAUDE_CODE_OAUTH_TOKEN", originalEnv.envToken);
+    process.exitCode = undefined;
+    if (tempHome) rmSync(tempHome, { recursive: true, force: true });
+    tempHome = undefined;
+  });
+
+  // Faking only Date leaves the Response body stream the provider reads on
+  // real timers; faking the whole clock never lets that read complete.
+  function readAt(instant: string): void {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(instant));
+  }
+
+  function restoreEnv(name: string, value: string | undefined): void {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+
+  function useClaudeOauthHome(): void {
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "linux",
+    });
+    tempHome = mkdtempSync(join(tmpdir(), "quota-axi-claude-polarity-"));
+    process.env.HOME = tempHome;
+    process.env.USERPROFILE = tempHome;
+    process.env.XDG_CACHE_HOME = join(tempHome, "cache");
+    delete process.env.CLAUDE_CONFIG_DIR;
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    const configDir = join(tempHome, ".claude");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(configDir, ".credentials.json"),
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "CLAUDE-SENTINEL-DO-NOT-LEAK-POLARITY",
+          expiresAt: "2035-01-01T00:00:00.000Z",
+          subscriptionType: "max",
+        },
+      }),
+    );
+  }
+
+  function stubClaudeUsage(payload: unknown): void {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.endsWith("/api/oauth/profile")) {
+          return new Response(
+            JSON.stringify({ account: { uuid: "polarity-account" } }),
+            { status: 200 },
+          );
+        }
+        if (url.endsWith("/api/oauth/usage")) {
+          return new Response(JSON.stringify(payload), { status: 200 });
+        }
+        throw new Error(`unexpected fetch ${url}`);
+      }),
+    );
+  }
+
+  async function publishedClaude(
+    payload: unknown,
+  ): Promise<QuotaAxiResponse["providers"][number]> {
+    useClaudeOauthHome();
+    stubClaudeUsage(payload);
+    const json = JSON.parse(
+      await quotaCommand(
+        ["--provider", "claude", "--json", "--no-credential-refresh"],
+        undefined,
+      ),
+    ) as QuotaAxiResponse;
+    return json.providers[0]!;
+  }
+
+  it("publishes the reset-boundary reading as nearly full quota", async () => {
+    readAt(READING_A.generatedAt);
+
+    const claude = await publishedClaude(READING_A.payload);
+
+    expect(claude.state).toMatchObject({ status: "fresh", stale: false });
+    expect(claude.windows).toMatchObject([
+      { id: "five_hour", percentRemaining: 52 },
+      { id: "seven_day", percentRemaining: 98 },
+      { id: "model:fable", percentRemaining: 100 },
+    ]);
+    expect(
+      claude.windows.find((window) => window.id === "seven_day")?.pace
+        ?.burnMultiple,
+    ).toBeLessThan(10);
+  });
+
+  it("publishes the second observed reading's remaining percentages", async () => {
+    readAt(READING_A.generatedAt);
+
+    const claude = await publishedClaude(READING_B.payload);
+
+    expect(claude.windows).toMatchObject([
+      { id: "five_hour", percentRemaining: 100 },
+      { id: "seven_day", percentRemaining: 39 },
+      { id: "model:fable", percentRemaining: 6 },
+    ]);
   });
 });
