@@ -586,6 +586,7 @@ describe("Kimi request transport", () => {
         "malformed_json",
       ],
       [jsonResponse({ usage: { limit: 0, used: 0 } }), "schema_invalid"],
+      [jsonResponse({ usage: {} }), "schema_invalid"],
       [
         jsonResponse({
           usages: { limit_7d: { reset_time: "2026-09-17T00:00:00Z" } },
@@ -614,6 +615,8 @@ describe("Kimi request transport", () => {
     {},
     { usages: {} },
     { usages: null },
+    { usage: null },
+    { limits: [] },
     { goods_version: "2", usages: {} },
   ])(
     "reports an authenticated empty /usages body as a fresh no-quota reading: %j",
