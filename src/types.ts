@@ -363,11 +363,14 @@ export type ProviderAdapter = {
    */
   incidentalSources?: readonly string[];
   /**
-   * Skip errors this adapter records when a source could not establish
-   * absence either way, such as a configuration naming no confirmable
-   * account. A provider with such a skip is never folded as not set up.
+   * Whether a skipped attempt this adapter recorded left presence unknown
+   * rather than showing the source genuinely absent, such as a configuration
+   * naming no confirmable account or an installed tool that failed. The
+   * adapter that owns the source is the only thing that can read its own
+   * skips, so it decides here instead of the human report guessing from
+   * error wording. A provider with such a skip is never folded as not set up.
    */
-  uncertainSkipErrors?: readonly string[];
+  isUncertainSkip?(attempt: SourceAttempt): boolean;
   discoverAccounts?(): Promise<ProviderAccount[] | undefined>;
   fetchQuota(options: ProviderOptions): Promise<ProviderQuota>;
   inspectAuth(options: ProviderOptions): Promise<AuthProviderReport>;

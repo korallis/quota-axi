@@ -212,7 +212,10 @@ export function renderQuotaTui(
 /**
  * Providers with nothing set up, folded into one dim line of names wrapped
  * under a hanging indent, ending with where to look next. Every supported
- * provider stays named, and the line grows by names, not by cards.
+ * provider stays named, and the line grows by names, not by cards. A name too
+ * long for a line of its own - an account key on a narrow terminal - is
+ * truncated rather than allowed to run past the terminal, and a line is only
+ * wrapped once it carries a name, so the label never stands alone.
  */
 function notSetUpFooter(absent: ProviderQuota[], columns: number): Line[] {
   const label = "○ not set up  ";
@@ -221,31 +224,42 @@ function notSetUpFooter(absent: ProviderQuota[], columns: number): Line[] {
   const lines: Line[] = [];
   let current: Line = [{ text: "  " }, { text: label, style: "dimBold" }];
   let used = indent;
+  const wrap = (): void => {
+    lines.push(current);
+    current = [{ text: " ".repeat(indent) }];
+    used = indent;
+  };
+  const append = (text: string, style: StyleName): void => {
+    const fitted = truncate(text, width - used);
+    if (!fitted) return;
+    current.push({ text: fitted, style });
+    used += displayWidth(fitted);
+  };
   absent.forEach((provider, index) => {
     const accountKey = configuredAccountKey(provider);
     const name = accountKey
       ? `${provider.provider}/${accountKey}`
       : provider.provider;
     const separator = index === 0 ? "" : " · ";
-    if (used + displayWidth(separator) + displayWidth(name) > width) {
-      lines.push(current);
-      current = [{ text: " ".repeat(indent) }];
-      used = indent;
+    if (
+      used > indent &&
+      used + displayWidth(separator) + displayWidth(name) > width
+    ) {
+      wrap();
     } else if (separator) {
       current.push({ text: separator, style: "dimmer" });
       used += displayWidth(separator);
     }
-    current.push({ text: name, style: "dim" });
-    used += displayWidth(name);
+    append(name, "dim");
   });
   const pointer = "quota-axi auth shows where each is read";
   if (used + 3 + displayWidth(pointer) > width) {
-    lines.push(current);
-    current = [{ text: " ".repeat(indent) }];
+    if (used > indent) wrap();
   } else {
     current.push({ text: "   " });
+    used += 3;
   }
-  current.push({ text: pointer, style: "dimmer" });
+  append(pointer, "dimmer");
   lines.push(current);
   return lines;
 }

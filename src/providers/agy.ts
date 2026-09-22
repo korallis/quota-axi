@@ -75,9 +75,21 @@ export type AgyProbeRuntime = {
   ): Promise<unknown>;
 };
 
+/**
+ * The only two outcomes that show Antigravity genuinely absent: no `agy` on
+ * PATH, and no Antigravity process listening. Every other skip - an installed
+ * CLI that timed out, a discovered endpoint that would not answer - leaves
+ * presence unknown, so the human report keeps Antigravity in view.
+ */
+export const AGY_CLI_NOT_INSTALLED = "agy CLI is not installed";
+export const AGY_NOT_RUNNING = "Antigravity/agy is not running";
+
 export const agyAdapter: ProviderAdapter = {
   id: "agy",
   label: "Antigravity",
+  isUncertainSkip: (attempt) =>
+    attempt.error !== AGY_CLI_NOT_INSTALLED &&
+    attempt.error !== AGY_NOT_RUNNING,
   fetchQuota,
   inspectAuth,
 };
@@ -232,7 +244,7 @@ async function fetchCliQuota(runtime: AgyProbeRuntime): Promise<{
     throw new AgyUnavailableError("Antigravity CLI discovery failed");
   }
   if (!commandPath) {
-    throw new AgyUnavailableError("agy CLI is not installed");
+    throw new AgyUnavailableError(AGY_CLI_NOT_INSTALLED);
   }
 
   let text: string;
@@ -370,8 +382,7 @@ async function fetchLoopbackQuota(runtime: AgyProbeRuntime): Promise<{
 }> {
   const deadline = createProbeDeadline();
   const endpoints = await discoverAgyEndpoints(runtime, deadline);
-  if (endpoints.length === 0)
-    throw new AgyUnavailableError("Antigravity/agy is not running");
+  if (endpoints.length === 0) throw new AgyUnavailableError(AGY_NOT_RUNNING);
 
   let lastError: unknown;
   for (const endpoint of endpoints) {
@@ -1072,8 +1083,7 @@ function sanitizeCliError(error: unknown): Error {
   const code = stringValue(details?.code);
   if (details?.killed === true || code === "ETIMEDOUT")
     return new AgyUnavailableError("Antigravity CLI /quota timed out");
-  if (code === "ENOENT")
-    return new AgyUnavailableError("agy CLI is not installed");
+  if (code === "ENOENT") return new AgyUnavailableError(AGY_CLI_NOT_INSTALLED);
   if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
     return new AgyMalformedResponseError(
       "Antigravity CLI /quota response too large",

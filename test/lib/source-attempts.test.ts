@@ -4,6 +4,12 @@ import {
   isDegradedSourceAttempt,
   providerPresence,
 } from "../../src/lib/source-attempts.js";
+import {
+  AGY_CLI_NOT_INSTALLED,
+  AGY_NOT_RUNNING,
+  agyAdapter,
+} from "../../src/providers/agy.js";
+import { copilotAdapter } from "../../src/providers/copilot.js";
 import type { ProviderQuota, SourceAttempt } from "../../src/types.js";
 
 describe("degraded source classification", () => {
@@ -129,13 +135,13 @@ describe("provider presence classification", () => {
       {
         source: "cli",
         status: "skipped",
-        error: "agy CLI is not installed",
+        error: AGY_CLI_NOT_INSTALLED,
         degraded: false,
       },
       {
         source: "loopback",
         status: "skipped",
-        error: "Antigravity/agy is not running",
+        error: AGY_NOT_RUNNING,
         degraded: false,
       },
     ];
@@ -154,7 +160,9 @@ describe("provider presence classification", () => {
       error: "commandcode_sign_in_required",
     }));
 
-    expect(providerPresence(reading("unavailable", agy))).toBe("absent");
+    expect(providerPresence(reading("unavailable", agy), agyAdapter)).toBe(
+      "absent",
+    );
     expect(providerPresence(reading("unavailable", alibaba))).toBe("absent");
     expect(providerPresence(reading("auth_required", commandcode))).toBe(
       "absent",
@@ -205,29 +213,74 @@ describe("provider presence classification", () => {
   });
 
   it("keeps a skip the adapter declares uncertain in view", () => {
-    const unconfirmed = reading("auth_required", [
-      { source: "apps-json", status: "skipped", error: "credentials_missing" },
-      {
-        source: "copilot-cli:keychain",
-        status: "skipped",
-        error: "selected_account_unconfirmed",
-        degraded: false,
-      },
-    ]);
-    const declarations = {
-      uncertainSkipErrors: [
-        "selected_account_unconfirmed",
-        "secure_store_unsupported",
-      ],
+    for (const error of [
+      "selected_account_unconfirmed",
+      "secure_store_unsupported",
+    ]) {
+      const unconfirmed = reading("auth_required", [
+        {
+          source: "apps-json",
+          status: "skipped",
+          error: "credentials_missing",
+        },
+        {
+          source: "copilot-cli:keychain",
+          status: "skipped",
+          error,
+          degraded: false,
+        },
+      ]);
+
+      expect(providerPresence(unconfirmed, copilotAdapter)).toBe("attention");
+      // Only the adapter that owns the word can say it is uncertain.
+      expect(providerPresence(unconfirmed)).toBe("absent");
+    }
+  });
+
+  it("keeps Antigravity in view whenever a skip is not one of its two absences", () => {
+    const notInstalled: SourceAttempt = {
+      source: "cli",
+      status: "skipped",
+      error: AGY_CLI_NOT_INSTALLED,
+      degraded: false,
+    };
+    const notRunning: SourceAttempt = {
+      source: "loopback",
+      status: "skipped",
+      error: AGY_NOT_RUNNING,
+      degraded: false,
     };
 
-    expect(providerPresence(unconfirmed, declarations)).toBe("attention");
-    // Only the adapter that owns the word can say it is uncertain.
-    expect(providerPresence(unconfirmed)).toBe("absent");
+    // An installed CLI that timed out, and a discovered endpoint that would
+    // not answer: both are recorded as skipped, neither shows absence.
+    for (const [cli, loopback] of [
+      [
+        { ...notInstalled, error: "Antigravity CLI /quota timed out" },
+        notRunning,
+      ],
+      [
+        notInstalled,
+        {
+          ...notRunning,
+          error: "Antigravity loopback unavailable (ECONNREFUSED)",
+        },
+      ],
+    ] satisfies [SourceAttempt, SourceAttempt][]) {
+      expect(
+        providerPresence(reading("unavailable", [cli, loopback]), agyAdapter),
+      ).toBe("attention");
+    }
+
+    expect(
+      providerPresence(
+        reading("unavailable", [notInstalled, notRunning]),
+        agyAdapter,
+      ),
+    ).toBe("absent");
   });
 
   it("ignores a sibling tool's login, but not a request through it that failed transiently", () => {
-    const declarations = { incidentalSources: ["gh:hosts.yml"] };
+    const declarations = copilotAdapter;
     const absentApps: SourceAttempt = {
       source: "apps-json",
       status: "skipped",
@@ -267,6 +320,22 @@ describe("provider presence classification", () => {
         ),
       ).toBe("attention");
     }
+    // A store that exists but could not be read establishes nothing about
+    // the sibling login either, so it is not evidence of absence.
+    expect(
+      providerPresence(
+        reading("auth_required", [
+          absentApps,
+          {
+            source: "gh:hosts.yml",
+            status: "skipped",
+            error: "credentials_read_error",
+            degraded: true,
+          },
+        ]),
+        declarations,
+      ),
+    ).toBe("attention");
     // Undeclared, the same login is ordinary evidence of the provider.
     expect(
       providerPresence(reading("auth_required", [absentApps, keyringGh])),

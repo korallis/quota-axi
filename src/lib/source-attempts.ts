@@ -67,20 +67,20 @@ export type ProviderPresence = "live" | "attention" | "absent";
  * adapter words it; the adapter that owns a source declares the two
  * exceptions.
  *
- * - `uncertainSkipErrors`: a skip that could not establish absence either way
- *   (Copilot's CLI configuration that names no confirmable account) keeps the
- *   provider in view.
+ * - `isUncertainSkip`: a skip the adapter reads as establishing nothing either
+ *   way (Copilot's CLI configuration that names no confirmable account, an
+ *   installed Antigravity CLI that timed out) keeps the provider in view.
  * - `incidentalSources`: a sibling tool's login is not evidence of this
- *   provider (a GitHub CLI login is not Copilot access), so a skip there, or a
- *   request through it that was definitively refused, counts as absence. A
- *   request through it that failed transiently proves nothing and keeps the
- *   provider in view.
+ *   provider (a GitHub CLI login is not Copilot access), so a skip there that
+ *   read the store, or a request through it that was definitively refused,
+ *   counts as absence. A store that could not be read, or a request that
+ *   failed transiently, proves nothing and keeps the provider in view.
  */
 export function providerPresence(
   provider: Pick<ProviderQuota, "state" | "attempts">,
   declarations: Pick<
     ProviderAdapter,
-    "incidentalSources" | "uncertainSkipErrors"
+    "incidentalSources" | "isUncertainSkip"
   > = {},
 ): ProviderPresence {
   if (provider.state.status === "fresh" || provider.state.status === "stale") {
@@ -89,11 +89,10 @@ export function providerPresence(
   const attempts = provider.attempts ?? [];
   if (attempts.length === 0) return "attention";
   const incidental = new Set(declarations.incidentalSources ?? []);
-  const uncertain = new Set(declarations.uncertainSkipErrors ?? []);
   const showsAbsence = (attempt: SourceAttempt): boolean => {
     if (incidental.has(attempt.source)) {
       return (
-        attempt.status === "skipped" ||
+        (attempt.status === "skipped" && attempt.degraded !== true) ||
         (attempt.status === "failed" &&
           provider.state.status === "auth_required")
       );
@@ -102,7 +101,7 @@ export function providerPresence(
       attempt.status === "skipped" &&
       attempt.credentialPresent !== true &&
       attempt.degraded !== true &&
-      !uncertain.has(attempt.error ?? "")
+      declarations.isUncertainSkip?.(attempt) !== true
     );
   };
   return attempts.every(showsAbsence) ? "absent" : "attention";

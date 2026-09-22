@@ -112,10 +112,9 @@ export const copilotAdapter: ProviderAdapter = {
   incidentalSources: [GH_CLI_CREDENTIAL_SOURCE],
   // A native CLI configuration that cannot be confirmed says nothing either
   // way, so it keeps Copilot in view instead of reading as absent.
-  uncertainSkipErrors: [
-    COPILOT_CLI_UNCONFIRMED_ACCOUNT,
-    COPILOT_CLI_SECURE_STORE_UNSUPPORTED,
-  ],
+  isUncertainSkip: (attempt) =>
+    attempt.error === COPILOT_CLI_UNCONFIRMED_ACCOUNT ||
+    attempt.error === COPILOT_CLI_SECURE_STORE_UNSUPPORTED,
   fetchQuota,
   inspectAuth,
 };

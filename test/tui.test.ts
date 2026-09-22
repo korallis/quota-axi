@@ -1275,6 +1275,33 @@ describe("providers that are not set up", () => {
     );
   });
 
+  it("truncates a folded name too long for the footer instead of overflowing", () => {
+    const long = {
+      ...notSetUp("codex"),
+      accountKey: `openai-codex-${"w".repeat(80)}`,
+    };
+    const lines = frame(
+      {
+        generatedAt: GENERATED_AT,
+        schemaVersion: 6,
+        providers: [long, notSetUp("zai")],
+      },
+      { columns: 80 },
+    );
+    const footer = lines.findIndex((line) => line.includes("○ not set up"));
+
+    for (const line of lines.slice(footer)) {
+      expect(displayColumns(line)).toBeLessThanOrEqual(80);
+    }
+    // The label never stands alone: the first name shares its line, cut to fit.
+    expect(lines[footer]).toMatch(
+      /^ {2}○ not set up {2}codex\/openai-codex-w+…$/,
+    );
+    expect(lines.slice(footer + 1)).toEqual([
+      "                zai   quota-axi auth shows where each is read",
+    ]);
+  });
+
   it("keeps the --full source footers for folded providers", () => {
     const lines = frame(fleet(), { full: true });
 
