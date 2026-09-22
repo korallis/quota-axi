@@ -586,7 +586,6 @@ describe("Kimi request transport", () => {
         "malformed_json",
       ],
       [jsonResponse({ usage: { limit: 0, used: 0 } }), "schema_invalid"],
-      [jsonResponse({ usages: {} }), "schema_invalid"],
       [
         jsonResponse({
           usages: { limit_7d: { reset_time: "2026-09-17T00:00:00Z" } },
@@ -601,6 +600,85 @@ describe("Kimi request transport", () => {
       }).fetchQuota(OPTIONS);
       expect(report.state.error).toBe(code);
     }
+  });
+
+  /**
+   * A Free-tier account's `/usages` answers 200 with no quota-bearing field
+   * at all. That is an authenticated, established-empty reading, not the
+   * unparseable-schema case above: report fresh with no windows and a usable
+   * auth status instead of `schema_invalid`, and still consult the sibling
+   * Kimi Code CLI source (verified below) rather than stopping at the first
+   * empty answer.
+   */
+  it.each([
+    {},
+    { usages: {} },
+    { usages: null },
+    { goods_version: "2", usages: {} },
+  ])(
+    "reports an authenticated empty /usages body as a fresh no-quota reading: %j",
+    async (body) => {
+      const report = await testAdapter({
+        fetch: vi.fn(async () => jsonResponse(body)),
+      }).fetchQuota(OPTIONS);
+
+      expect(report.state).toMatchObject({
+        status: "fresh",
+        stale: false,
+        authStatus: "usable",
+      });
+      expect(report.state.error).toBeUndefined();
+      expect(report.windows).toEqual([]);
+      expect(report.attempts).toEqual([
+        { source: "pi:kimi-coding", status: "success" },
+        {
+          source: "kimi-code-cli",
+          status: "skipped",
+          error: "kimi_code_cli_credential_unavailable",
+        },
+      ]);
+
+      const generatedAt = new Date(NOW).toISOString();
+      const rendered = renderQuotaToon(
+        {
+          generatedAt,
+          schemaVersion: 5,
+          providers: [withQuotaSemantics(report, generatedAt)],
+        },
+        "quota-axi",
+        true,
+      );
+      expect(rendered).not.toContain("schema_invalid");
+      expect(rendered).toContain("no_quota");
+    },
+  );
+
+  it("consults the sibling Kimi Code CLI source after an empty Pi /usages body instead of stopping at schema_invalid", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(jsonResponse({}))
+      .mockResolvedValueOnce(jsonResponse(CURRENT_USAGES_PAYLOAD));
+
+    const report = await testAdapter({
+      cliCredentialSource: cliCredentialSource({
+        status: "available",
+        accessToken: "cli-token",
+      }),
+      fetch: fetch as unknown as typeof globalThis.fetch,
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state).toMatchObject({ status: "fresh", stale: false });
+    expect(report.state.error).toBeUndefined();
+    expect(report.windows.map(({ id }) => id)).toEqual([
+      "five_hour",
+      "weekly",
+      "month_total",
+      "month_code",
+    ]);
+    expect(report.attempts).toEqual([
+      { source: "pi:kimi-coding", status: "success" },
+      { source: "kimi-code-cli", status: "success" },
+    ]);
   });
 
   it("reports current usages windows on the CLI path instead of schema_invalid", async () => {
@@ -832,6 +910,7 @@ describe("Kimi request transport", () => {
 describe("Kimi payload normalization", () => {
   it("normalizes a principal weekly detail and flags omitted limits", () => {
     expect(normalizeKimiPayload({ usage: { limit: 250, used: 55 } })).toEqual({
+      kind: "windows",
       windows: [
         {
           id: "weekly",
@@ -848,6 +927,7 @@ describe("Kimi payload normalization", () => {
 
   it("normalizes the current usages map without inventing absent windows", () => {
     expect(normalizeKimiPayload(CURRENT_USAGES_PAYLOAD)).toEqual({
+      kind: "windows",
       windows: [
         {
           id: "five_hour",
@@ -1096,16 +1176,31 @@ describe("Kimi payload normalization", () => {
     expect(normalized.diagnostics).toEqual([]);
   });
 
-  it("rejects payloads that establish no quota windows", () => {
-    expect(() => normalizeKimiPayload({ usages: {} })).toThrow(
-      "schema_invalid",
-    );
+  it.each([
+    {},
+    { usages: {} },
+    { usages: null },
+    { goods_version: "2", usages: {} },
+  ])(
+    "reports an established-empty body as no_quota instead of schema_invalid: %j",
+    (payload) => {
+      expect(normalizeKimiPayload(payload)).toEqual({ kind: "no_quota" });
+    },
+  );
+
+  it("rejects payloads that declare quota fields this reader cannot parse", () => {
     expect(() =>
       normalizeKimiPayload({
         usages: { limit_7d: { reset_time: "2026-09-17T00:00:00Z" } },
       }),
     ).toThrow("schema_invalid");
     expect(() => normalizeKimiPayload({ usage: { used: 1 } })).toThrow(
+      "schema_invalid",
+    );
+    expect(() =>
+      normalizeKimiPayload({ usage: { limit: 0, used: 0 } }),
+    ).toThrow("schema_invalid");
+    expect(() => normalizeKimiPayload({ unknown_key: 1 })).toThrow(
       "schema_invalid",
     );
   });

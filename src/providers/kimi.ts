@@ -80,10 +80,17 @@ export type KimiDiagnostic =
   | { code: "detail_invalid"; index: number }
   | { code: "usage_detail_invalid"; key: string };
 
-export type NormalizedKimiPayload = {
-  windows: QuotaWindow[];
-  diagnostics: KimiDiagnostic[];
-};
+export type NormalizedKimiPayload =
+  | { kind: "windows"; windows: QuotaWindow[]; diagnostics: KimiDiagnostic[] }
+  /**
+   * The vendor answered `/usages` with an authenticated body that declares no
+   * quota-bearing field at all (a Free-tier account gets `{}`), distinct from
+   * a body that declares a quota field this reader cannot parse.
+   */
+  | { kind: "no_quota" };
+
+/** Keys `/usages` documents alongside the quota map that carry no quota data. */
+const KIMI_NON_QUOTA_KEYS = new Set(["goods_version", "boosterWallet"]);
 
 type KimiDependencies = {
   broker: KimiCredentialBroker;
@@ -294,6 +301,12 @@ async function acquireKimiQuota(
   const failures: KimiFailureRecord[] = [];
   /** The cache identity of the source being consulted, for the failure paths. */
   let cacheContextId: string | undefined;
+  /**
+   * Whether any source proved live but declared no quota-bearing field, so
+   * the outer loop still consults the sibling source (mirroring Grok's
+   * `live_no_quota` floor) instead of stopping on the first empty answer.
+   */
+  let sawLiveNoQuota = false;
 
   try {
     /**
@@ -355,7 +368,7 @@ async function acquireKimiQuota(
         async (selected) => {
           attempts.push({ source, status: "failed" });
           try {
-            report = await readKimiQuota(
+            const outcome = await readKimiQuota(
               selected.credential,
               candidate.quotaUrl,
               source,
@@ -369,7 +382,11 @@ async function acquireKimiQuota(
              * environment, which a Pi reading never contacted.
              */
             if (cacheContextId) publishKimiReadingContextId(cacheContextId);
-            return { kind: "quota", result: report };
+            if (outcome.kind === "no_quota") {
+              return { kind: "live_no_quota" };
+            }
+            report = outcome.result;
+            return { kind: "quota", result: outcome.result };
           } catch (error) {
             const failure = asKimiFailure(error);
             /**
@@ -402,6 +419,11 @@ async function acquireKimiQuota(
         },
       );
       if (credentialSelection.outcome === "quota" && report) return report;
+      if (credentialSelection.outcome === "live_no_quota") {
+        sawLiveNoQuota = true;
+        if (controller.signal.aborted) break;
+        continue;
+      }
       // Handover on credential problems only: a transport, decoding, or
       // server failure is about the request, so it is reported as-is.
       if (
@@ -410,6 +432,10 @@ async function acquireKimiQuota(
       ) {
         break;
       }
+    }
+
+    if (sawLiveNoQuota) {
+      return noQuotaReport(attempts, dependencies);
     }
 
     const defining = definingFailure(failures);
@@ -565,6 +591,11 @@ function untrustedWindowId(diagnostic: KimiDiagnostic): string {
   }
 }
 
+type KimiReadOutcome =
+  | { kind: "quota"; result: ProviderQuota }
+  /** The source answered live but declared no quota-bearing field. */
+  | { kind: "no_quota" };
+
 async function readKimiQuota(
   credential: string,
   quotaUrl: string,
@@ -572,7 +603,7 @@ async function readKimiQuota(
   attempts: SourceAttempt[],
   signal: AbortSignal,
   dependencies: KimiDependencies,
-): Promise<ProviderQuota> {
+): Promise<KimiReadOutcome> {
   const payload = await requestKimiQuota(
     credential,
     quotaUrl,
@@ -581,22 +612,28 @@ async function readKimiQuota(
     dependencies.now,
   );
   const normalized = normalizeKimiPayload(payload);
+  attempts[attempts.length - 1] = { source, status: "success" };
+  if (normalized.kind === "no_quota") {
+    return { kind: "no_quota" };
+  }
   const untrustedWindowIds = normalized.diagnostics.map(untrustedWindowId);
   const refreshedAt = new Date(dependencies.now()).toISOString();
-  attempts[attempts.length - 1] = { source, status: "success" };
   return {
-    provider: "kimi",
-    label: "Kimi",
-    source: "api",
-    windows: normalized.windows,
-    state: {
-      status: "fresh",
-      stale: false,
-      refreshedAt,
-      ...(untrustedWindowIds.length > 0 ? { untrustedWindowIds } : {}),
-      sourcesTried: attempts.map(({ source: name }) => name),
+    kind: "quota",
+    result: {
+      provider: "kimi",
+      label: "Kimi",
+      source: "api",
+      windows: normalized.windows,
+      state: {
+        status: "fresh",
+        stale: false,
+        refreshedAt,
+        ...(untrustedWindowIds.length > 0 ? { untrustedWindowIds } : {}),
+        sourcesTried: attempts.map(({ source: name }) => name),
+      },
+      attempts,
     },
-    attempts,
   };
 }
 
@@ -781,6 +818,34 @@ function cliCredentialFailureFor(
     status: "auth_required",
     definitiveAuth: true,
   });
+}
+
+/**
+ * No source yielded quota windows, but at least one proved live with an
+ * authenticated, established-empty `/usages` body (a Free-tier account).
+ * That is a usable credential with nothing to report, not an error: report
+ * fresh with no windows, mirroring the Copilot entitlement-only precedent.
+ * Per README Cache, a fresh reading with no windows clears this context's
+ * cache slot rather than serving a stale one.
+ */
+function noQuotaReport(
+  attempts: SourceAttempt[],
+  dependencies: KimiDependencies,
+): ProviderQuota {
+  return {
+    provider: "kimi",
+    label: "Kimi",
+    source: "api",
+    windows: [],
+    state: {
+      status: "fresh",
+      stale: false,
+      refreshedAt: new Date(dependencies.now()).toISOString(),
+      authStatus: "usable",
+      sourcesTried: attempts.map(({ source }) => source),
+    },
+    attempts,
+  };
 }
 
 function failureReport(
@@ -1126,10 +1191,13 @@ export function normalizeKimiPayload(payload: unknown): NormalizedKimiPayload {
   }
 
   const fromUsages = normalizeUsagesMap(root.usages);
-  if (fromUsages && fromUsages.windows.length > 0) return fromUsages;
+  if (fromUsages && fromUsages.windows.length > 0) {
+    return { kind: "windows", ...fromUsages };
+  }
 
   const principal = normalizeDetail(root.usage);
   if (!principal) {
+    if (isEstablishedEmptyKimiPayload(root)) return { kind: "no_quota" };
     throw new KimiFailure("schema_invalid", { staleEligible: true });
   }
 
@@ -1148,11 +1216,11 @@ export function normalizeKimiPayload(payload: unknown): NormalizedKimiPayload {
   const limitsValue = root.limits;
   if (limitsValue === undefined || limitsValue === null) {
     diagnostics.push({ code: "limits_missing" });
-    return { windows, diagnostics };
+    return { kind: "windows", windows, diagnostics };
   }
   if (!Array.isArray(limitsValue)) {
     diagnostics.push({ code: "limits_invalid" });
-    return { windows, diagnostics };
+    return { kind: "windows", windows, diagnostics };
   }
 
   let fiveHourSeen = false;
@@ -1181,10 +1249,45 @@ export function normalizeKimiPayload(payload: unknown): NormalizedKimiPayload {
     });
   }
 
-  return { windows, diagnostics };
+  return { kind: "windows", windows, diagnostics };
 }
 
-function normalizeUsagesMap(value: unknown): NormalizedKimiPayload | undefined {
+/**
+ * A body establishes no quota windows when it is a JSON object that declares
+ * none of the fields the vendor's own parser reads as quota - `usages`
+ * absent, `null`, or `{}`; `usage` absent or `null`; `limits` absent, `null`,
+ * or `[]` - and carries no other key besides the vendor's own documented
+ * non-quota companions. Any other key, or any of those fields carrying
+ * content, means the body declares quota this reader could not parse, which
+ * stays `schema_invalid` instead.
+ */
+function isEstablishedEmptyKimiPayload(root: Record<string, unknown>): boolean {
+  if (!isAbsentOrEmptyObject(root.usages)) return false;
+  if (root.usage !== undefined && root.usage !== null) return false;
+  if (!isAbsentOrEmptyArray(root.limits)) return false;
+  const knownKeys = new Set([
+    "usages",
+    "usage",
+    "limits",
+    ...KIMI_NON_QUOTA_KEYS,
+  ]);
+  return Object.keys(root).every((key) => knownKeys.has(key));
+}
+
+function isAbsentOrEmptyObject(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  const obj = objectValue(value);
+  return obj !== undefined && Object.keys(obj).length === 0;
+}
+
+function isAbsentOrEmptyArray(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  return Array.isArray(value) && value.length === 0;
+}
+
+function normalizeUsagesMap(
+  value: unknown,
+): { windows: QuotaWindow[]; diagnostics: KimiDiagnostic[] } | undefined {
   const usages = objectValue(value);
   if (!usages) return undefined;
 

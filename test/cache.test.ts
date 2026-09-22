@@ -28,6 +28,7 @@ import {
 import { staleFromCache } from "../src/providers/common.js";
 import { withQuotaSemantics } from "../src/interpretation.js";
 import { createKimiCodeCliCredentialSource } from "../src/providers/kimi-code-cli-credential.js";
+import { createKimiAdapter } from "../src/providers/kimi.js";
 import { publishMiniMaxReadingContextId } from "../src/providers/minimax-cache-context.js";
 import type { ProviderId, ProviderQuota } from "../src/types.js";
 
@@ -406,6 +407,71 @@ oauth_host = "https://auth.kimi.ai"
     expect(
       readCachedKimiProvider(await selectKimiEnvironment()),
     ).toBeUndefined();
+  });
+
+  /**
+   * An authenticated `/usages` body with no quota field (a Free-tier account)
+   * is a fresh reading with no windows, per README Cache "fresh with no
+   * windows clears this context's slot" - not a stale-eligible failure that
+   * would preserve a pre-existing snapshot.
+   */
+  it("clears an existing Kimi snapshot on a fresh no-quota reading, and a later transient failure does not resurrect it", async () => {
+    useTempCache();
+    const codeHome = join(tempDir!, "no-quota-kimi-code-home");
+    mkdirSync(codeHome, { recursive: true });
+    process.env.KIMI_CODE_HOME = codeHome;
+
+    writeCachedProviders([{ ...quota("kimi", 42), source: "api" as const }]);
+    expect(readCachedProvider("kimi")).toBeDefined();
+
+    const piBroker = {
+      resolve: async () =>
+        ({
+          status: "available",
+          kind: "api_key",
+          credential: "synthetic-pi-key",
+        }) as const,
+      inspect: async () => "available" as const,
+    };
+    const cliSource = createKimiCodeCliCredentialSource();
+
+    const noQuotaReport = await createKimiAdapter({
+      broker: piBroker,
+      cliCredentialSource: cliSource,
+      fetch: (async () =>
+        new Response("{}", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })) as unknown as typeof fetch,
+      readCachedProvider: readCachedKimiProvider,
+      deleteCachedProvider,
+      now: () => Date.parse("2026-09-22T00:00:00Z"),
+    }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+
+    expect(noQuotaReport.state).toMatchObject({
+      status: "fresh",
+      stale: false,
+      authStatus: "usable",
+    });
+    expect(noQuotaReport.windows).toEqual([]);
+
+    writeCachedProviders([noQuotaReport]);
+    expect(readCachedProvider("kimi")).toBeUndefined();
+
+    const failed = await createKimiAdapter({
+      broker: piBroker,
+      cliCredentialSource: cliSource,
+      fetch: (async () => {
+        throw new Error("network down");
+      }) as unknown as typeof fetch,
+      readCachedProvider: readCachedKimiProvider,
+      deleteCachedProvider,
+      now: () => Date.parse("2026-09-22T00:05:00Z"),
+    }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+
+    expect(failed.state.stale).toBe(false);
+    expect(failed.windows).toEqual([]);
+    expect(readCachedProvider("kimi")).toBeUndefined();
   });
 
   it("scopes MiniMax cache reuse to the reading's source and deployment", () => {
