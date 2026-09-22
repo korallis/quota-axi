@@ -11,6 +11,13 @@ import { readWindowsGenericPassword } from "../lib/windows-credential.js";
 import type { AuthSourceReport, ProviderOptions } from "../types.js";
 
 export const COPILOT_CLI_SOURCE = "copilot-cli:keychain";
+/**
+ * The native source's skips that establish nothing about the account either
+ * way: a configuration that names no account it can confirm, and a platform
+ * without a supported secure store. Neither proves Copilot absent.
+ */
+export const COPILOT_CLI_UNCONFIRMED_ACCOUNT = "selected_account_unconfirmed";
+export const COPILOT_CLI_SECURE_STORE_UNSUPPORTED = "secure_store_unsupported";
 const SERVICE = "copilot-cli";
 const FILE_LIMIT = 1024 * 1024;
 const TOKEN_LIMIT = 16 * 1024;
@@ -145,9 +152,9 @@ async function selectIdentity(
     return blocked("structurally_invalid", "credentials_invalid", false);
   }
   if (!identity)
-    return blocked("unsupported", "selected_account_unconfirmed", true);
+    return blocked("unsupported", COPILOT_CLI_UNCONFIRMED_ACCOUNT, true);
   if (!secureStoreSupported(deps.platform))
-    return blocked("unsupported", "secure_store_unsupported", true);
+    return blocked("unsupported", COPILOT_CLI_SECURE_STORE_UNSUPPORTED, true);
   return { kind: "identity", identity, path, home, defaultHome };
 }
 
@@ -268,7 +275,7 @@ export async function resolveCopilotCliCredential(
       return state("unsupported", "selected_account_changed");
     }
   } catch {
-    return state("read_error", "selected_account_unconfirmed");
+    return state("read_error", COPILOT_CLI_UNCONFIRMED_ACCOUNT);
   }
   deps.recordGrant(path, identity.account);
   return {

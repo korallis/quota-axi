@@ -90,10 +90,7 @@ async function quotaTuiReport(
     // Presence reads the source attempts, which redaction removes, so it is
     // derived from the complete model before the renderer sees the report.
     const presence = response.providers.map((provider) =>
-      providerPresence(
-        provider,
-        PROVIDERS[provider.provider].incidentalSources,
-      ),
+      providerPresence(provider, PROVIDERS[provider.provider]),
     );
     notSetUp = presence.filter((entry) => entry === "absent").length;
     return renderQuotaTui(redactedResponse(response, flags.full), {

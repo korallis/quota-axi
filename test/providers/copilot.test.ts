@@ -659,19 +659,24 @@ describe("GitHub Copilot credential sources", () => {
 
   describe("presence in the human report", () => {
     const presence = (result: Awaited<ReturnType<typeof fetchQuota>>) =>
-      providerPresence(result, copilotAdapter.incidentalSources);
+      providerPresence(result, copilotAdapter);
 
-    it("folds only a GitHub CLI login definitively refused Copilot access", async () => {
+    it("folds a GitHub CLI login that shows no Copilot access", async () => {
+      // A keyring login and an unparseable store describe gh, not Copilot, and
+      // a token Copilot refuses is a definitive answer: a gh-only user folds.
       writeGhHosts(
         "github.com:\n    users:\n        fixture-user:\n    user: fixture-user\n",
       );
       stubUserEndpoint({});
       const keyring = await fetchQuota(options);
-      expect(keyring.attempts?.[2]?.credentialPresent).toBe(true);
-      expect(presence(keyring)).toBe("attention");
+      expect(keyring.attempts?.[2]).toMatchObject({
+        error: "credentials_keyring_storage",
+        credentialPresent: true,
+      });
+      expect(presence(keyring)).toBe("absent");
 
       writeGhHosts("github.com:\n\toauth_token: gho_cli_fixture\n");
-      expect(presence(await fetchQuota(options))).toBe("attention");
+      expect(presence(await fetchQuota(options))).toBe("absent");
 
       writeGhToken("gho_revoked_fixture");
       const api = stubUserEndpoint({ gho_revoked_fixture: 403 });
@@ -681,6 +686,45 @@ describe("GitHub Copilot credential sources", () => {
         status: "failed",
       });
       expect(presence(rejected)).toBe("absent");
+    });
+
+    it("keeps Copilot in view when its CLI configuration cannot be confirmed as absent", async () => {
+      const originalCopilotHome = process.env.COPILOT_HOME;
+      process.env.COPILOT_HOME = join(tempDir!, "copilot");
+      const config = join(process.env.COPILOT_HOME, "config.json");
+      stubUserEndpoint({});
+      try {
+        // A Copilot CLI configuration that selects no account it can confirm.
+        writeJson(config, { lastLoggedInUser: null });
+        const unconfirmed = await fetchQuota(options);
+        expect(unconfirmed.attempts?.[1]).toMatchObject({
+          source: "copilot-cli:keychain",
+          status: "skipped",
+          error: "selected_account_unconfirmed",
+          degraded: false,
+        });
+        expect(presence(unconfirmed)).toBe("attention");
+
+        // A signed-in Copilot CLI on a platform with no supported secure store.
+        writeJson(config, {
+          lastLoggedInUser: { host: "https://github.com", login: "octocat" },
+        });
+        const unsupported = await withPlatform("linux", () =>
+          fetchQuota(options),
+        );
+        expect(unsupported.attempts?.[1]).toMatchObject({
+          error: "secure_store_unsupported",
+          degraded: false,
+        });
+        expect(presence(unsupported)).toBe("attention");
+
+        // Without a configuration the source is plainly absent.
+        rmSync(config);
+        expect(presence(await fetchQuota(options))).toBe("absent");
+      } finally {
+        if (originalCopilotHome === undefined) delete process.env.COPILOT_HOME;
+        else process.env.COPILOT_HOME = originalCopilotHome;
+      }
     });
 
     it.each([

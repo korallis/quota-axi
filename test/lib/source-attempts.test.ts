@@ -121,7 +121,44 @@ describe("provider presence classification", () => {
     expect(providerPresence(reading("stale", [absent]))).toBe("live");
   });
 
-  it("reads a provider as not set up only when every source was skipped as absent", () => {
+  it("reads a provider as not set up when every source was skipped as absent, whatever the adapter calls it", () => {
+    // The attempts real adapters record on a machine with none of these set
+    // up: a CLI that is not installed, an app that is not running, and a key
+    // missing from every source. Each adapter words absence its own way.
+    const agy: SourceAttempt[] = [
+      {
+        source: "cli",
+        status: "skipped",
+        error: "agy CLI is not installed",
+        degraded: false,
+      },
+      {
+        source: "loopback",
+        status: "skipped",
+        error: "Antigravity/agy is not running",
+        degraded: false,
+      },
+    ];
+    const alibaba: SourceAttempt[] = [
+      { source: "bl-cli", status: "skipped", error: "bl_cli_unavailable" },
+    ];
+    const commandcode: SourceAttempt[] = [
+      "pi:commandcode",
+      "env:COMMAND_CODE_API_KEY",
+      "env:COMMANDCODE_API_KEY",
+      "commandcode-cli",
+      "omp:commandcode",
+    ].map((source) => ({
+      source,
+      status: "skipped",
+      error: "commandcode_sign_in_required",
+    }));
+
+    expect(providerPresence(reading("unavailable", agy))).toBe("absent");
+    expect(providerPresence(reading("unavailable", alibaba))).toBe("absent");
+    expect(providerPresence(reading("auth_required", commandcode))).toBe(
+      "absent",
+    );
     expect(
       providerPresence(
         reading("auth_required", [
@@ -165,59 +202,74 @@ describe("provider presence classification", () => {
   it("never folds a provider whose absence was not shown", () => {
     expect(providerPresence(reading("error"))).toBe("attention");
     expect(providerPresence(reading("error", []))).toBe("attention");
-    for (const attempt of [
-      {
-        source: "cli",
-        status: "skipped",
-        error: "account_unconfirmed",
-        degraded: false,
-      },
-      {
-        source: "keychain",
-        status: "skipped",
-        error: "secure_store_unsupported",
-        degraded: false,
-      },
-      {
-        source: "cli",
-        status: "skipped",
-        error: "agy CLI is not installed",
-        degraded: false,
-      },
-    ] satisfies SourceAttempt[]) {
-      expect(providerPresence(reading("unavailable", [attempt]))).toBe(
-        "attention",
-      );
-    }
   });
 
-  it("ignores only definitive auth rejection from an incidental source", () => {
+  it("keeps a skip the adapter declares uncertain in view", () => {
+    const unconfirmed = reading("auth_required", [
+      { source: "apps-json", status: "skipped", error: "credentials_missing" },
+      {
+        source: "copilot-cli:keychain",
+        status: "skipped",
+        error: "selected_account_unconfirmed",
+        degraded: false,
+      },
+    ]);
+    const declarations = {
+      uncertainSkipErrors: [
+        "selected_account_unconfirmed",
+        "secure_store_unsupported",
+      ],
+    };
+
+    expect(providerPresence(unconfirmed, declarations)).toBe("attention");
+    // Only the adapter that owns the word can say it is uncertain.
+    expect(providerPresence(unconfirmed)).toBe("absent");
+  });
+
+  it("ignores a sibling tool's login, but not a request through it that failed transiently", () => {
+    const declarations = { incidentalSources: ["gh:hosts.yml"] };
     const absentApps: SourceAttempt = {
       source: "apps-json",
       status: "skipped",
       error: "credentials_missing",
     };
-    const uncertainGh: SourceAttempt = {
+    const keyringGh: SourceAttempt = {
       source: "gh:hosts.yml",
       status: "skipped",
       error: "credentials_keyring_storage",
       credentialPresent: true,
     };
-    const rejectedGh: SourceAttempt = {
+    const failedGh: SourceAttempt = {
       source: "gh:hosts.yml",
       status: "failed",
       error: "GitHub Copilot sign-in required",
     };
 
     expect(
-      providerPresence(reading("auth_required", [absentApps, uncertainGh]), [
-        "gh:hosts.yml",
-      ]),
-    ).toBe("attention");
-    expect(
-      providerPresence(reading("auth_required", [absentApps, rejectedGh]), [
-        "gh:hosts.yml",
-      ]),
+      providerPresence(
+        reading("auth_required", [absentApps, keyringGh]),
+        declarations,
+      ),
     ).toBe("absent");
+    // Copilot refused the gh token: a definitive answer, not Copilot use.
+    expect(
+      providerPresence(
+        reading("auth_required", [absentApps, failedGh]),
+        declarations,
+      ),
+    ).toBe("absent");
+    // A server failure or rate limit proves nothing about access.
+    for (const status of ["error", "rate_limited"] as const) {
+      expect(
+        providerPresence(
+          reading(status, [absentApps, { ...failedGh, error: "HTTP 500" }]),
+          declarations,
+        ),
+      ).toBe("attention");
+    }
+    // Undeclared, the same login is ordinary evidence of the provider.
+    expect(
+      providerPresence(reading("auth_required", [absentApps, keyringGh])),
+    ).toBe("attention");
   });
 });

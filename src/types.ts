@@ -356,10 +356,18 @@ export type ProviderAdapter = {
   label: string;
   /**
    * Credential sources that can hold a credential without showing the user
-   * has this provider, such as Copilot's GitHub CLI fallback. A definitive
-   * auth rejection from one of these sources is not evidence of provider use.
+   * has this provider, such as Copilot's GitHub CLI fallback. A skip there,
+   * or a request through it that was definitively refused, is not evidence
+   * of use when the human report folds providers that are not set up; a
+   * request through it that failed transiently still is.
    */
   incidentalSources?: readonly string[];
+  /**
+   * Skip errors this adapter records when a source could not establish
+   * absence either way, such as a configuration naming no confirmable
+   * account. A provider with such a skip is never folded as not set up.
+   */
+  uncertainSkipErrors?: readonly string[];
   discoverAccounts?(): Promise<ProviderAccount[] | undefined>;
   fetchQuota(options: ProviderOptions): Promise<ProviderQuota>;
   inspectAuth(options: ProviderOptions): Promise<AuthProviderReport>;

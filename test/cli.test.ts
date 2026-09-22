@@ -1289,8 +1289,10 @@ describe("CLI quota rendering", () => {
 describe("human report folding for providers that are not set up", () => {
   /**
    * One live provider, one whose credential is present behind a prompt, a
-   * Copilot whose GitHub CLI login was definitively denied Copilot access, and
-   * every other provider with nothing set up at all.
+   * Copilot whose only credential is a keyring-stored GitHub CLI login, and
+   * every other provider with nothing set up at all. Antigravity, Alibaba, and
+   * Command Code carry the attempts their real adapters record when nothing is
+   * installed or configured, each wording absence its own way.
    */
   function stubFoldFleet(): void {
     useTempCache();
@@ -1325,18 +1327,73 @@ describe("human report folding for providers that are not set up", () => {
           },
           {
             source: "gh:hosts.yml",
-            status: "failed",
-            error: "GitHub Copilot sign-in required",
+            status: "skipped",
+            error: "credentials_keyring_storage",
+            credentialPresent: true,
           },
         ],
       }),
       incidentalSources: ["gh:hosts.yml"],
     };
+    PROVIDERS.agy = providerWithQuota({
+      ...notSetUpQuota("agy"),
+      state: {
+        status: "unavailable",
+        stale: false,
+        error: "Antigravity/agy is not running",
+      },
+      attempts: [
+        {
+          source: "cli",
+          status: "skipped",
+          error: "agy CLI is not installed",
+          degraded: false,
+        },
+        {
+          source: "loopback",
+          status: "skipped",
+          error: "Antigravity/agy is not running",
+          degraded: false,
+        },
+      ],
+    });
+    PROVIDERS.alibaba = providerWithQuota({
+      ...notSetUpQuota("alibaba"),
+      state: {
+        status: "unavailable",
+        stale: false,
+        error: "bl_cli_unavailable",
+      },
+      attempts: [
+        { source: "bl-cli", status: "skipped", error: "bl_cli_unavailable" },
+      ],
+    });
+    PROVIDERS.commandcode = providerWithQuota({
+      ...notSetUpQuota("commandcode"),
+      attempts: [
+        "pi:commandcode",
+        "env:COMMAND_CODE_API_KEY",
+        "env:COMMANDCODE_API_KEY",
+        "commandcode-cli",
+        "omp:commandcode",
+      ].map((source) => ({
+        source,
+        status: "skipped",
+        error: "commandcode_sign_in_required",
+      })),
+    });
   }
 
   it("folds them into one footer line, reading each adapter's incidental sources", async () => {
     stubFoldFleet();
     const output = await capture(["--tui", "--once"]);
+
+    expect(output.trimEnd().split("\n").slice(-3)).toEqual([
+      "  ○ not set up  cursor · copilot · grok · kimi · zai · agy · alibaba · opencode-go · commandcode",
+      "                minimax · mimo · deepseek · openrouter · elevenlabs",
+      "                quota-axi auth shows where each is read",
+    ]);
+    expect(output).not.toMatch(/╭─ ○ (agy|alibaba|commandcode) /);
 
     expect(output).toMatch(/· 1 live · 1 needs attention · 14 not set up\n/);
     expect(output).toContain("╭─ ● codex ");

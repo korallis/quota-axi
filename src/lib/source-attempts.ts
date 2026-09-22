@@ -1,4 +1,9 @@
-import type { DegradedSource, ProviderQuota, SourceAttempt } from "../types.js";
+import type {
+  DegradedSource,
+  ProviderAdapter,
+  ProviderQuota,
+  SourceAttempt,
+} from "../types.js";
 
 /**
  * A credential source that was not genuinely absent and did not yield a reading.
@@ -57,38 +62,48 @@ export function degradedSources(
 export type ProviderPresence = "live" | "attention" | "absent";
 
 /**
- * Classify a provider reading by the evidence its own attempts carry. A source
- * named in `incidentalSources` can hold a credential without showing the user
- * has this provider (a GitHub CLI login is not Copilot access), but only a
- * definitive auth rejection from that source is ignored. Every other outcome
- * must itself positively establish ordinary credential absence before the
- * provider can fold away.
+ * Classify a provider reading by the evidence its own attempts carry. A skip
+ * without a present credential or a degraded store is absence, however the
+ * adapter words it; the adapter that owns a source declares the two
+ * exceptions.
+ *
+ * - `uncertainSkipErrors`: a skip that could not establish absence either way
+ *   (Copilot's CLI configuration that names no confirmable account) keeps the
+ *   provider in view.
+ * - `incidentalSources`: a sibling tool's login is not evidence of this
+ *   provider (a GitHub CLI login is not Copilot access), so a skip there, or a
+ *   request through it that was definitively refused, counts as absence. A
+ *   request through it that failed transiently proves nothing and keeps the
+ *   provider in view.
  */
 export function providerPresence(
   provider: Pick<ProviderQuota, "state" | "attempts">,
-  incidentalSources: readonly string[] = [],
+  declarations: Pick<
+    ProviderAdapter,
+    "incidentalSources" | "uncertainSkipErrors"
+  > = {},
 ): ProviderPresence {
   if (provider.state.status === "fresh" || provider.state.status === "stale") {
     return "live";
   }
   const attempts = provider.attempts ?? [];
   if (attempts.length === 0) return "attention";
-  const allAbsent = attempts.every(
-    (attempt) =>
-      (incidentalSources.includes(attempt.source) &&
-        attempt.status === "failed" &&
-        provider.state.status === "auth_required") ||
-      isCredentialAbsentAttempt(attempt),
-  );
-  return allAbsent ? "absent" : "attention";
-}
-
-function isCredentialAbsentAttempt(attempt: SourceAttempt): boolean {
-  return (
-    attempt.status === "skipped" &&
-    attempt.credentialPresent !== true &&
-    attempt.degraded !== true &&
-    (attempt.error === "credentials_missing" ||
-      /_credential_unavailable$/.test(attempt.error ?? ""))
-  );
+  const incidental = new Set(declarations.incidentalSources ?? []);
+  const uncertain = new Set(declarations.uncertainSkipErrors ?? []);
+  const showsAbsence = (attempt: SourceAttempt): boolean => {
+    if (incidental.has(attempt.source)) {
+      return (
+        attempt.status === "skipped" ||
+        (attempt.status === "failed" &&
+          provider.state.status === "auth_required")
+      );
+    }
+    return (
+      attempt.status === "skipped" &&
+      attempt.credentialPresent !== true &&
+      attempt.degraded !== true &&
+      !uncertain.has(attempt.error ?? "")
+    );
+  };
+  return attempts.every(showsAbsence) ? "absent" : "attention";
 }

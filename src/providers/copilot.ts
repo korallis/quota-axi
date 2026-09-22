@@ -36,7 +36,9 @@ import {
 } from "./gh-cli-credential.js";
 
 import {
+  COPILOT_CLI_SECURE_STORE_UNSUPPORTED,
   COPILOT_CLI_SOURCE,
+  COPILOT_CLI_UNCONFIRMED_ACCOUNT,
   resolveCopilotCliCredential,
 } from "./copilot-cli-credential.js";
 
@@ -108,6 +110,12 @@ export const copilotAdapter: ProviderAdapter = {
   // A GitHub CLI login is not evidence of Copilot access (see the source order
   // above), so a user with only `gh` reads as not set up rather than broken.
   incidentalSources: [GH_CLI_CREDENTIAL_SOURCE],
+  // A native CLI configuration that cannot be confirmed says nothing either
+  // way, so it keeps Copilot in view instead of reading as absent.
+  uncertainSkipErrors: [
+    COPILOT_CLI_UNCONFIRMED_ACCOUNT,
+    COPILOT_CLI_SECURE_STORE_UNSUPPORTED,
+  ],
   fetchQuota,
   inspectAuth,
 };
