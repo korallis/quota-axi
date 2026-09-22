@@ -727,6 +727,33 @@ describe("GitHub Copilot credential sources", () => {
       }
     });
 
+    it("keeps a Copilot CLI account awaiting Keychain consent in view", async () => {
+      const originalCopilotHome = process.env.COPILOT_HOME;
+      delete process.env.COPILOT_HOME;
+      process.env.HOME = join(tempDir!, "home");
+      stubUserEndpoint({});
+      try {
+        // apps.json and gh are absent; the native CLI is signed in but its
+        // secure-store value still waits on --allow-keychain-prompt.
+        writeJson(join(process.env.HOME, ".copilot", "config.json"), {
+          lastLoggedInUser: { host: "https://github.com", login: "octocat" },
+        });
+        const gated = await withPlatform("win32", () => fetchQuota(options));
+
+        expect(gated.attempts?.[1]).toMatchObject({
+          source: "copilot-cli:keychain",
+          status: "skipped",
+          error: "keychain_prompt_required",
+          degraded: false,
+        });
+        expect(gated.attempts?.[1].credentialPresent).toBeUndefined();
+        expect(presence(gated)).toBe("attention");
+      } finally {
+        if (originalCopilotHome !== undefined)
+          process.env.COPILOT_HOME = originalCopilotHome;
+      }
+    });
+
     it.each([
       ["a server failure", 500, "error"],
       ["a rate limit", 429, "rate_limited"],
