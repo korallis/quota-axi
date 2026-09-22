@@ -2,8 +2,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { degradedSources } from "../../src/lib/source-attempts.js";
 import {
+  degradedSources,
+  providerPresence,
+} from "../../src/lib/source-attempts.js";
+import {
+  copilotAdapter,
   fetchQuota,
   inspectAuth,
   normalizeCopilotUser,
@@ -651,5 +655,49 @@ describe("GitHub Copilot credential sources", () => {
       },
     ]);
     expect(JSON.stringify(result)).not.toContain("gho_cli_fixture");
+  });
+
+  describe("presence in the human report", () => {
+    const presence = (result: Awaited<ReturnType<typeof fetchQuota>>) =>
+      providerPresence(result, copilotAdapter.incidentalSources);
+
+    it("reads a GitHub CLI login alone as not set up, not as broken Copilot", async () => {
+      // A keyring login, an unreadable store, and a token Copilot refuses all
+      // describe gh, not Copilot, so a gh-only user folds Copilot away.
+      writeGhHosts(
+        "github.com:\n    users:\n        fixture-user:\n    user: fixture-user\n",
+      );
+      stubUserEndpoint({});
+      const keyring = await fetchQuota(options);
+      expect(keyring.attempts?.[2]?.credentialPresent).toBe(true);
+      expect(presence(keyring)).toBe("absent");
+
+      writeGhHosts("github.com:\n\toauth_token: gho_cli_fixture\n");
+      expect(presence(await fetchQuota(options))).toBe("absent");
+
+      writeGhToken("gho_revoked_fixture");
+      const api = stubUserEndpoint({ gho_revoked_fixture: 403 });
+      const rejected = await fetchQuota(options);
+      expect(api.bearers).toEqual(["Bearer gho_revoked_fixture"]);
+      expect(rejected.attempts?.[2]?.status).toBe("failed");
+      expect(presence(rejected)).toBe("absent");
+    });
+
+    it("keeps Copilot in view when its own store holds a credential", async () => {
+      writeAppsJson({ "github.com": { oauth_token: "stale-apps-token" } });
+      writeGhHosts(
+        "github.com:\n    users:\n        fixture-user:\n    user: fixture-user\n",
+      );
+      stubUserEndpoint({ "stale-apps-token": 401 });
+
+      expect(presence(await fetchQuota(options))).toBe("attention");
+    });
+
+    it("counts a Copilot reading through the GitHub CLI login as live", async () => {
+      writeGhToken("gho_cli_fixture");
+      stubUserEndpoint({ gho_cli_fixture: 200 });
+
+      expect(presence(await fetchQuota(options))).toBe("live");
+    });
   });
 });

@@ -1,3 +1,7 @@
+import {
+  providerPresence,
+  type ProviderPresence,
+} from "./lib/source-attempts.js";
 import type {
   EffectiveAvailability,
   ProviderId,
@@ -10,7 +14,9 @@ import type {
  * Human terminal report ("Direction D'"): a two-up card grid with thin
  * headroom bars and a linear-pace marker wherever pace is known. This surface is
  * presentation only - it renders the same redacted response the TOON and JSON
- * surfaces receive and derives nothing new from providers or the cache.
+ * surfaces receive, grouped by the caller's presence classification, and
+ * derives nothing new from providers or the cache. Providers with nothing set
+ * up fold into one footer line unless the caller asks to draw them in full.
  */
 
 export type TuiColorDepth = "none" | "16" | "256" | "truecolor";
@@ -23,6 +29,18 @@ export type TuiOptions = {
   full?: boolean;
   /** IANA time zone for header/absolute times; defaults to the system zone. */
   timeZone?: string;
+  /**
+   * Each provider's presence, aligned with `response.providers`. The caller
+   * derives it from the unredacted source attempts, which a redacted response
+   * no longer carries. Left out, each provider is classified from what it
+   * still holds, so a provider without attempts never folds.
+   */
+  presence?: readonly ProviderPresence[];
+  /**
+   * Draw providers that are not set up as full cards instead of folding them
+   * into one footer line (`a` in the live report, `--all`, or `--provider`).
+   */
+  showNotSetUp?: boolean;
 };
 
 const CARD_WIDTH = 49;
@@ -132,19 +150,55 @@ export function renderQuotaTui(
   const generatedAtMs = Date.parse(response.generatedAt);
   const timeZone = options.timeZone;
 
-  const ordered = [
-    ...response.providers.filter(isLive),
-    ...response.providers.filter((provider) => !isLive(provider)),
-  ];
-  const cards = ordered.map((provider) => buildCard(provider, generatedAtMs));
+  const tiers: Record<ProviderPresence, ProviderQuota[]> = {
+    live: [],
+    attention: [],
+    absent: [],
+  };
+  response.providers.forEach((provider, index) => {
+    tiers[options.presence?.[index] ?? providerPresence(provider)].push(
+      provider,
+    );
+  });
+  const { live, attention, absent } = tiers;
+  const carded = [...live, ...attention];
+  const card = (provider: ProviderQuota): Card =>
+    buildCard(provider, generatedAtMs);
 
   const lines: Line[] = [];
-  lines.push([{ text: `  ${headerText(response, timeZone)}`, style: "dim" }]);
+  lines.push([
+    {
+      text: `  ${headerText(response, tiers, timeZone)}`,
+      style: "dim",
+    },
+  ]);
   lines.push([]);
-  lines.push(...layoutCards(cards, twoColumn));
+  if (carded.length > 0) {
+    lines.push(...layoutCards(carded.map(card), twoColumn));
+  } else if (!options.showNotSetUp) {
+    lines.push([
+      {
+        text: "  nothing to measure yet · no provider credentials found on this machine",
+        style: "label",
+      },
+    ]);
+  }
+  if (absent.length > 0) {
+    if (lines.length > 2) lines.push([]);
+    if (options.showNotSetUp) {
+      lines.push([
+        { text: "  ○ not set up", style: "dimBold" },
+        { text: ` · ${absent.length}`, style: "dim" },
+      ]);
+      lines.push([]);
+      lines.push(...layoutCards(absent.map(card), twoColumn));
+    } else {
+      lines.push(...notSetUpFooter(absent, columns));
+    }
+  }
   if (options.full) {
     lines.push([]);
-    for (const provider of ordered) {
+    for (const provider of [...carded, ...absent]) {
       for (const footerLine of fullFooterLines(provider, columns - 2)) {
         lines.push([{ text: `  ${footerLine}`, style: "dim" }]);
       }
@@ -153,6 +207,47 @@ export function renderQuotaTui(
   return lines
     .map((line) => renderLine(trimRight(line), options.colorDepth ?? "none"))
     .join("\n");
+}
+
+/**
+ * Providers with nothing set up, folded into one dim line of names wrapped
+ * under a hanging indent, ending with where to look next. Every supported
+ * provider stays named, and the line grows by names, not by cards.
+ */
+function notSetUpFooter(absent: ProviderQuota[], columns: number): Line[] {
+  const label = "○ not set up  ";
+  const indent = 2 + displayWidth(label);
+  const width = columns - 2;
+  const lines: Line[] = [];
+  let current: Line = [{ text: "  " }, { text: label, style: "dimBold" }];
+  let used = indent;
+  absent.forEach((provider, index) => {
+    const accountKey = configuredAccountKey(provider);
+    const name = accountKey
+      ? `${provider.provider}/${accountKey}`
+      : provider.provider;
+    const separator = index === 0 ? "" : " · ";
+    if (used + displayWidth(separator) + displayWidth(name) > width) {
+      lines.push(current);
+      current = [{ text: " ".repeat(indent) }];
+      used = indent;
+    } else if (separator) {
+      current.push({ text: separator, style: "dimmer" });
+      used += displayWidth(separator);
+    }
+    current.push({ text: name, style: "dim" });
+    used += displayWidth(name);
+  });
+  const pointer = "quota-axi auth shows where each is read";
+  if (used + 3 + displayWidth(pointer) > width) {
+    lines.push(current);
+    current = [{ text: " ".repeat(indent) }];
+  } else {
+    current.push({ text: "   " });
+  }
+  current.push({ text: pointer, style: "dimmer" });
+  lines.push(current);
+  return lines;
 }
 
 /**
@@ -181,19 +276,21 @@ function isLive(provider: ProviderQuota): boolean {
   return provider.state.status === "fresh" || provider.state.status === "stale";
 }
 
-function headerText(response: QuotaAxiResponse, timeZone?: string): string {
-  const live = response.providers.filter(isLive).length;
-  const signedOut = response.providers.filter(
-    (provider) => provider.state.status === "auth_required",
-  ).length;
-  const failed = response.providers.length - live - signedOut;
+function headerText(
+  response: QuotaAxiResponse,
+  tiers: Record<ProviderPresence, ProviderQuota[]>,
+  timeZone?: string,
+): string {
   const parts = [
     "quota-axi",
     formatHeaderTime(response.generatedAt, timeZone),
-    `${live} live`,
-    `${signedOut} signed out`,
+    `${tiers.live.length} live`,
   ];
-  if (failed > 0) parts.push(`${failed} unavailable`);
+  const attention = tiers.attention.length;
+  if (attention > 0) {
+    parts.push(`${attention} ${attention === 1 ? "needs" : "need"} attention`);
+  }
+  if (tiers.absent.length > 0) parts.push(`${tiers.absent.length} not set up`);
   return parts.filter(Boolean).join(" · ");
 }
 

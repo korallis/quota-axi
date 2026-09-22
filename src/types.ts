@@ -354,6 +354,13 @@ export type ProviderOptions = {
 export type ProviderAdapter = {
   id: ProviderId;
   label: string;
+  /**
+   * Credential sources that can hold a credential without showing the user
+   * has this provider, such as Copilot's GitHub CLI fallback. Their attempts
+   * are never evidence of use when the human report folds providers that are
+   * not set up.
+   */
+  incidentalSources?: readonly string[];
   discoverAccounts?(): Promise<ProviderAccount[] | undefined>;
   fetchQuota(options: ProviderOptions): Promise<ProviderQuota>;
   inspectAuth(options: ProviderOptions): Promise<AuthProviderReport>;

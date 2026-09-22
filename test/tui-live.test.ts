@@ -273,6 +273,44 @@ describe("live terminal report loop", () => {
     expect(io.rawModes).toEqual([true, false]);
   });
 
+  it("runs a caller key's action and repaints without refetching", async () => {
+    const io = harness();
+    const source = counting();
+    let expanded = false;
+    const pressed: string[] = [];
+
+    const run = runLiveTui<number>({
+      load: source.load,
+      render: (value) => `frame ${value} ${expanded ? "open" : "folded"}`,
+      keys: {
+        a: () => {
+          expanded = !expanded;
+          pressed.push("a");
+        },
+        q: () => pressed.push("q"),
+      },
+      intervalMillis: 300_000,
+      io: io.io,
+    });
+    await flush();
+    const armed = io.pendingTimers();
+    expect(io.frame()).toBe("frame 1 folded");
+
+    io.press("a");
+    await flush();
+    expect(io.frame()).toBe("frame 1 open");
+    io.press("za");
+    await flush();
+    expect(io.frame()).toBe("frame 1 folded");
+    expect(source.calls()).toBe(1);
+    expect(io.pendingTimers()).toBe(armed);
+
+    // A key the loop owns keeps its meaning.
+    io.press("q");
+    await expect(run).resolves.toBe(1);
+    expect(pressed).toEqual(["a", "a"]);
+  });
+
   it("restores the terminal when a refresh throws", async () => {
     const io = harness();
 

@@ -10,6 +10,11 @@ import {
 
 export type QuotaFlags = {
   providers: ProviderId[];
+  /**
+   * True when `--provider` named the providers. The human report then draws
+   * every named provider as a full card, even one that is not set up.
+   */
+  explicitProviders: boolean;
   json: boolean;
   full: boolean;
   tui: boolean;
@@ -28,6 +33,8 @@ export type QuotaFlags = {
   refreshSeconds?: number;
   /** Render one `--tui` frame and exit instead of staying live. */
   once: boolean;
+  /** Start `--tui` with providers that are not set up drawn as full cards. */
+  all: boolean;
 };
 
 /** Refresh bounds: fast enough to feel live, slow enough to stay polite. */
@@ -104,6 +111,7 @@ function parseCommonFlags(
   let full = false;
   let tui = false;
   let once = false;
+  let all = false;
   let refreshSeconds: number | undefined;
   let allowKeychainPrompt = false;
   let allowClaudeInference = false;
@@ -131,6 +139,10 @@ function parseCommonFlags(
     }
     if (arg === "--once") {
       once = true;
+      continue;
+    }
+    if (arg === "--all") {
+      all = true;
       continue;
     }
     if (arg === "--refresh") {
@@ -219,16 +231,25 @@ function parseCommonFlags(
       ["Run `quota-axi --tui --refresh 5m` for the live human report"],
     );
   }
+  if (all && !tui) {
+    throw new AxiError(
+      "--all is only supported with --tui",
+      "VALIDATION_ERROR",
+      ["Run `quota-axi --tui --all` to draw every provider as a full card"],
+    );
+  }
 
   return {
     providers:
       providerValue === undefined && defaultProviders
         ? [...defaultProviders]
         : parseProviderScope(providerValue),
+    explicitProviders: providerValue !== undefined,
     json,
     full,
     tui,
     once,
+    all,
     allowKeychainPrompt,
     allowClaudeInference,
     noCredentialRefresh,

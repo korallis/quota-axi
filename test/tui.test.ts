@@ -8,7 +8,9 @@ import {
   thinBar,
 } from "../src/tui.js";
 import { withQuotaSemantics } from "../src/interpretation.js";
-import type { ProviderQuota } from "../src/types.js";
+import { providerPresence } from "../src/lib/source-attempts.js";
+import { redactedResponse } from "../src/render.js";
+import type { ProviderQuota, QuotaAxiResponse } from "../src/types.js";
 import {
   claudeProvider,
   codexProvider,
@@ -81,7 +83,7 @@ describe("renderQuotaTui structure", () => {
   it("summarizes the fleet in the dim header with local time", () => {
     const lines = render();
     expect(lines[0]).toBe(
-      "  quota-axi · 2026-08-06 16:21 PDT · 3 live · 3 signed out",
+      "  quota-axi · 2026-08-06 16:21 PDT · 3 live · 3 need attention",
     );
   });
 
@@ -1093,5 +1095,191 @@ describe("color handling", () => {
     expect(
       detectTuiColorDepth({ FORCE_COLOR: "0", COLORTERM: "truecolor" }, false),
     ).toBe("none");
+  });
+});
+
+describe("providers that are not set up", () => {
+  function notSetUp(
+    provider: ProviderQuota["provider"],
+    sources: string[] = [`env:${provider.toUpperCase()}_API_KEY`],
+  ): ProviderQuota {
+    return {
+      provider,
+      label: provider,
+      source: "unavailable",
+      windows: [],
+      state: {
+        status: "auth_required",
+        stale: false,
+        error: `${provider}_credential_unavailable`,
+        sourcesTried: sources,
+      },
+      attempts: sources.map((source) => ({
+        source,
+        status: "skipped",
+        error: "credentials_missing",
+      })),
+    };
+  }
+
+  function brokenKimi(): ProviderQuota {
+    return {
+      provider: "kimi",
+      label: "Kimi",
+      source: "unavailable",
+      windows: [],
+      state: {
+        status: "error",
+        stale: false,
+        error: "schema_invalid",
+        sourcesTried: ["pi:kimi-coding"],
+      },
+      attempts: [
+        { source: "pi:kimi-coding", status: "failed", error: "schema_invalid" },
+      ],
+    };
+  }
+
+  /** Declaration order interleaves every tier on purpose. */
+  function fleet(): QuotaAxiResponse {
+    return {
+      generatedAt: GENERATED_AT,
+      schemaVersion: 5,
+      providers: [
+        notSetUp("zai", ["pi:zai", "opencode:auth.json"]),
+        claudeProvider(),
+        notSetUp("agy", ["cli", "loopback"]),
+        brokenKimi(),
+        codexProvider(),
+        notSetUp("alibaba", ["bl-cli"]),
+        notSetUp("opencode-go", ["opencode:auth.json"]),
+        notSetUp("commandcode"),
+        notSetUp("minimax"),
+        notSetUp("mimo"),
+        notSetUp("deepseek"),
+        notSetUp("openrouter"),
+        notSetUp("elevenlabs"),
+      ],
+    };
+  }
+
+  function frame(
+    response: QuotaAxiResponse,
+    options: Parameters<typeof renderQuotaTui>[1] = {},
+  ): string[] {
+    return renderQuotaTui(response, {
+      timeZone: "America/Los_Angeles",
+      ...options,
+    }).split("\n");
+  }
+
+  it("folds them into one footer line after the live and broken cards", () => {
+    const lines = frame(fleet());
+
+    expect(lines[0]).toBe(
+      "  quota-axi · 2026-08-06 16:21 PDT · 2 live · 1 needs attention · 10 not set up",
+    );
+    expect(findLine(lines, "● claude")).toMatch(/● claude .*● codex /);
+    const kimi = lines.findIndex((line) => line.includes("○ kimi"));
+    const footer = lines.findIndex((line) => line.includes("○ not set up"));
+    expect(kimi).toBeGreaterThan(lines.findIndex((l) => l.includes("● codex")));
+    expect(footer).toBeGreaterThan(kimi);
+    expect(lines.slice(footer)).toEqual([
+      "  ○ not set up  zai · agy · alibaba · opencode-go · commandcode · minimax · mimo · deepseek",
+      "                openrouter · elevenlabs   quota-axi auth shows where each is read",
+    ]);
+    // No card is drawn for a provider that is not set up.
+    expect(lines.join("\n")).not.toMatch(/╭─ ○ (zai|agy|mimo|elevenlabs) /);
+  });
+
+  it("wraps the footer under a hanging indent in a narrow terminal", () => {
+    const lines = frame(fleet(), { columns: 80 });
+    const footer = lines.findIndex((line) => line.includes("○ not set up"));
+
+    expect(lines.slice(footer)).toEqual([
+      "  ○ not set up  zai · agy · alibaba · opencode-go · commandcode · minimax",
+      "                mimo · deepseek · openrouter · elevenlabs",
+      "                quota-axi auth shows where each is read",
+    ]);
+    for (const line of lines)
+      expect(displayColumns(line)).toBeLessThanOrEqual(80);
+  });
+
+  it("draws them as full cards below a label when asked", () => {
+    const lines = frame(fleet(), { showNotSetUp: true });
+    const label = lines.indexOf("  ○ not set up · 10");
+
+    expect(label).toBeGreaterThan(lines.findIndex((l) => l.includes("○ kimi")));
+    expect(lines[label + 1]).toBe("");
+    // The expanded group starts its own row rather than pairing with kimi.
+    expect(lines[label + 2]).toMatch(/^╭─ ○ zai ─+ signed out ─╮ {2}╭─ ○ agy /);
+    expect(lines.slice(label)).toContainEqual(
+      expect.stringContaining("elevenlabs credential unavailable"),
+    );
+    expect(lines.join("\n")).not.toContain("quota-axi auth shows where");
+    expect(lines[0]).toContain("2 live · 1 needs attention · 10 not set up");
+  });
+
+  it("takes presence from the caller, since redaction removes the attempts", () => {
+    const complete = fleet();
+    const redacted = redactedResponse(complete, false);
+
+    // Without attempts nothing proves absence, so nothing folds.
+    expect(frame(redacted)[0]).toContain("2 live · 11 need attention");
+    expect(frame(redacted).join("\n")).toContain("╭─ ○ zai ");
+
+    const presence = complete.providers.map((provider) =>
+      providerPresence(provider),
+    );
+    const lines = frame(redacted, { presence });
+    expect(lines[0]).toContain("2 live · 1 needs attention · 10 not set up");
+    expect(lines.join("\n")).not.toContain("╭─ ○ zai ");
+  });
+
+  it("says nothing is set up instead of drawing an empty grid", () => {
+    const response: QuotaAxiResponse = {
+      generatedAt: GENERATED_AT,
+      schemaVersion: 5,
+      providers: [notSetUp("zai"), notSetUp("mimo"), notSetUp("deepseek")],
+    };
+
+    expect(frame(response)).toEqual([
+      "  quota-axi · 2026-08-06 16:21 PDT · 0 live · 3 not set up",
+      "",
+      "  nothing to measure yet · no provider credentials found on this machine",
+      "",
+      "  ○ not set up  zai · mimo · deepseek   quota-axi auth shows where each is read",
+    ]);
+
+    const expanded = frame(response, { showNotSetUp: true });
+    expect(expanded.slice(0, 4)).toEqual([
+      "  quota-axi · 2026-08-06 16:21 PDT · 0 live · 3 not set up",
+      "",
+      "  ○ not set up · 3",
+      "",
+    ]);
+    expect(expanded[4]).toMatch(/^╭─ ○ zai .*╭─ ○ mimo /);
+  });
+
+  it("names a folded account lane by provider and account key", () => {
+    const work = { ...notSetUp("codex"), accountKey: "openai-codex-work" };
+    const lane = { ...notSetUp("zai"), accountKey: "default" };
+    const lines = frame({
+      generatedAt: GENERATED_AT,
+      schemaVersion: 6,
+      providers: [work, lane],
+    });
+
+    expect(findLine(lines, "○ not set up")).toContain(
+      "codex/openai-codex-work · zai ",
+    );
+  });
+
+  it("keeps the --full source footers for folded providers", () => {
+    const lines = frame(fleet(), { full: true });
+
+    expect(findLine(lines, "  alibaba · tried")).toContain(
+      "bl-cli (skipped: credentials_missing)",
+    );
   });
 });

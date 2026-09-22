@@ -4,6 +4,7 @@ import { parseFlags, parseModelsFlags, type QuotaFlags } from "./args.js";
 import { writeCachedProviders } from "./cache.js";
 import { withQuotaSemantics } from "./interpretation.js";
 import { createModelsResponse, MODEL_CATALOG_PROVIDER_IDS } from "./models.js";
+import { providerPresence } from "./lib/source-attempts.js";
 import { nowIso } from "./lib/time.js";
 import {
   fetchAccountQuotas,
@@ -81,22 +82,59 @@ async function quotaTuiReport(
       : { columns: process.stdout.columns }),
     colorDepth: detectTuiColorDepth(process.env, process.stdout.isTTY === true),
   });
-  const frame = (response: QuotaAxiResponse): string =>
-    renderQuotaTui(redactedResponse(response, flags.full), {
+  // A provider named with --provider is always drawn in full; otherwise the
+  // providers that are not set up fold into one line until `a` or --all.
+  let showNotSetUp = flags.all || flags.explicitProviders;
+  let notSetUp = 0;
+  const frame = (response: QuotaAxiResponse): string => {
+    // Presence reads the source attempts, which redaction removes, so it is
+    // derived from the complete model before the renderer sees the report.
+    const presence = response.providers.map((provider) =>
+      providerPresence(
+        provider,
+        PROVIDERS[provider.provider].incidentalSources,
+      ),
+    );
+    notSetUp = presence.filter((entry) => entry === "absent").length;
+    return renderQuotaTui(redactedResponse(response, flags.full), {
       ...terminal(),
       full: flags.full,
+      presence,
+      showNotSetUp,
     });
+  };
 
   if (flags.once || !isInteractiveTerminal()) {
     return frame(await loadQuota(flags.providers, options, false));
   }
 
   const refreshSeconds = flags.refreshSeconds ?? DEFAULT_REFRESH_SECONDS;
-  const hint = `Press q to quit · refreshing every ${formatInterval(refreshSeconds)}`;
+  const refreshing = `refreshing every ${formatInterval(refreshSeconds)}`;
+  const keyHints = (): string[] =>
+    flags.explicitProviders || notSetUp === 0
+      ? []
+      : [`a ${showNotSetUp ? "hide" : "show"} not set up`];
   const last = await runLiveTui<QuotaAxiResponse>({
     load: () => loadQuota(flags.providers, options, true),
     render: frame,
-    status: (scroll) => renderTuiHintLine(scrollHint(scroll, hint), terminal()),
+    status: (scroll) =>
+      renderTuiHintLine(
+        scrollHint(
+          scroll,
+          ["Press q to quit", ...keyHints(), refreshing].join(" · "),
+          keyHints(),
+        ),
+        terminal(),
+      ),
+    keys: flags.explicitProviders
+      ? {}
+      : {
+          // Only while something is folded or expanded, so the state never
+          // flips silently behind a hint that is not shown.
+          a: () => {
+            if (notSetUp > 0) showNotSetUp = !showNotSetUp;
+          },
+        },
     intervalMillis: refreshSeconds * 1000,
     io: processLiveTuiIo(),
   });

@@ -15,12 +15,12 @@ export const TOP_HELP = `usage: quota-axi [quota|auth|models] [flags]
 commands[3]:
   (none)=quota, auth, models
 output:
-  Default TOON reports local quota evidence. models is a deterministic data join; --sort runway is explicit opt-in ordering. --tui renders a live human terminal report instead (q quits).
+  Default TOON reports local quota evidence. models is a deterministic data join; --sort runway is explicit opt-in ordering. --tui renders a live human terminal report instead (q quits); providers that are not set up fold into one line that a or --all expands.
 notes:
   Every quota read, including each --tui refresh, may delegate an expired session's renewal to the vendor CLI that owns it. --no-credential-refresh disables delegated credential refresh; auth is always read-only.
   --profile-only requires explicit CLAUDE_CONFIG_DIR or CODEX_HOME plus exactly one matching provider. It reads only that credential file: no Keychain, Pi, CLI RPC, fallback, refresh, or cache. With --full --json, non-secret account identity, source, and attempts remain visible; tokens and file contents remain excluded, and ordinary output remains redacted.
-flags[14]:
-  --provider <${PROVIDER_IDS.join(",")}>, --json, --full, --tui, --refresh <30s-24h>, --once, --allow-keychain-prompt, --allow-claude-inference, --no-credential-refresh, --profile-only, --intelligence <high|medium|low>, --sort <runway>, --help, -v/--version
+flags[15]:
+  --provider <${PROVIDER_IDS.join(",")}>, --json, --full, --tui, --refresh <30s-24h>, --once, --all, --allow-keychain-prompt, --allow-claude-inference, --no-credential-refresh, --profile-only, --intelligence <high|medium|low>, --sort <runway>, --help, -v/--version
 examples:
   quota-axi
   quota-axi --provider claude
@@ -33,6 +33,7 @@ examples:
   quota-axi --tui
   quota-axi --tui --refresh 1m
   quota-axi --tui --once
+  quota-axi --tui --all
   quota-axi --no-credential-refresh
   quota-axi --tui --no-credential-refresh
   quota-axi auth

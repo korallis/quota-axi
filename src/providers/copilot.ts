@@ -105,6 +105,9 @@ type CredentialCandidate = {
 export const copilotAdapter: ProviderAdapter = {
   id: "copilot",
   label: "GitHub Copilot",
+  // A GitHub CLI login is not evidence of Copilot access (see the source order
+  // above), so a user with only `gh` reads as not set up rather than broken.
+  incidentalSources: [GH_CLI_CREDENTIAL_SOURCE],
   fetchQuota,
   inspectAuth,
 };

@@ -8,7 +8,9 @@
  * The loop owns the viewport: the report renders at whatever height its cards
  * need, and `scrollFrame` windows it onto the terminal's actual rows. Scroll
  * keys move that window, so a terminal too short for the whole report still
- * reaches every line instead of losing the top to the alternate screen.
+ * reaches every line instead of losing the top to the alternate screen. The
+ * caller can add its own single-character keys; each runs its action and
+ * repaints the current snapshot without refetching.
  */
 
 import { scrollFrame, type ScrollStatus } from "./tui-viewport.js";
@@ -45,6 +47,12 @@ export type LiveTuiOptions<T> = {
   render(value: T): string;
   /** Closing line pinned to the last row when height permits. */
   status?(status: ScrollStatus): string;
+  /**
+   * Extra single-character keys. Each action runs, then the current snapshot
+   * repaints without a refetch. A key the loop already owns (quit and scroll)
+   * keeps its built-in meaning.
+   */
+  keys?: Readonly<Record<string, () => void>>;
   intervalMillis: number;
   io: LiveTuiIo;
 };
@@ -97,7 +105,9 @@ const CHARACTER_KEYS: Readonly<Record<string, ScrollCommand>> = {
   G: "bottom",
 };
 
-type WakeReason = "tick" | "resize" | "scroll" | "quit";
+type KeyCommand = ScrollCommand | { action: string };
+
+type WakeReason = "tick" | "resize" | "scroll" | "key" | "quit";
 
 /**
  * Run the live report until the operator quits, and return the last snapshot
@@ -107,6 +117,7 @@ export async function runLiveTui<T>({
   load,
   render,
   status,
+  keys = {},
   intervalMillis,
   io,
 }: LiveTuiOptions<T>): Promise<T | undefined> {
@@ -134,18 +145,25 @@ export async function runLiveTui<T>({
   let pendingKeyInput = "";
   const onData = (chunk: Buffer | string): void => {
     const text = pendingKeyInput + chunk.toString();
-    const parsed = parseKeys(text);
+    const parsed = parseKeys(text, keys);
     pendingKeyInput = parsed.remainder;
     let scrolled = false;
+    let acted = false;
     for (const command of parsed.commands) {
       if (command === "quit") {
         requestQuit();
         return;
       }
+      if (typeof command === "object") {
+        keys[command.action]?.();
+        acted = true;
+        continue;
+      }
       pendingScrollCommands.push(command);
       scrolled = true;
     }
     if (scrolled) notify("scroll");
+    else if (acted) notify("key");
   };
 
   const stopResize = io.onResize?.(() => {
@@ -210,7 +228,7 @@ export async function runLiveTui<T>({
           const reason = await new Promise<WakeReason>((resolve) => {
             wake = resolve;
           });
-          if (reason !== "resize" && reason !== "scroll") break;
+          if (reason === "tick" || reason === "quit") break;
           paint();
         }
       } finally {
@@ -230,11 +248,14 @@ export async function runLiveTui<T>({
 }
 
 /** Decode raw-mode input into commands while retaining a split escape suffix. */
-function parseKeys(text: string): {
-  commands: ScrollCommand[];
+function parseKeys(
+  text: string,
+  actions: Readonly<Record<string, () => void>>,
+): {
+  commands: KeyCommand[];
   remainder: string;
 } {
-  const commands: ScrollCommand[] = [];
+  const commands: KeyCommand[] = [];
   let index = 0;
   while (index < text.length) {
     const escape = ESCAPE_KEYS.find(([sequence]) =>
@@ -252,8 +273,12 @@ function parseKeys(text: string): {
     ) {
       return { commands, remainder: suffix };
     }
-    const command = CHARACTER_KEYS[text[index]];
+    const character = text[index];
+    const command = CHARACTER_KEYS[character];
     if (command) commands.push(command);
+    else if (Object.hasOwn(actions, character)) {
+      commands.push({ action: character });
+    }
     index += 1;
   }
   return { commands, remainder: "" };

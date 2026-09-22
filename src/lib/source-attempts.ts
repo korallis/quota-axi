@@ -1,4 +1,4 @@
-import type { DegradedSource, SourceAttempt } from "../types.js";
+import type { DegradedSource, ProviderQuota, SourceAttempt } from "../types.js";
 
 /**
  * A credential source that was not genuinely absent and did not yield a reading.
@@ -40,4 +40,43 @@ export function degradedSources(
     });
   }
   return [...bySource.values()];
+}
+
+/**
+ * How present a provider is on this machine, as the human report groups it.
+ *
+ * - `live`: a fresh or stale reading, so there is something to draw.
+ * - `attention`: no reading, but a source found something - a credential
+ *   (expired, rejected, or waiting on a prompt), an installed tool that
+ *   failed, or a request that failed - so the user has this provider and it is
+ *   broken. A provider that recorded no attempts at all lands here too:
+ *   absence was never shown.
+ * - `absent`: every source was skipped as genuinely absent. This positive
+ *   evidence is the only thing that lets a report fold a provider away.
+ */
+export type ProviderPresence = "live" | "attention" | "absent";
+
+/**
+ * Classify a provider reading by the evidence its own attempts carry. A source
+ * named in `incidentalSources` can hold a credential without showing the user
+ * has this provider (a GitHub CLI login is not Copilot access), so its
+ * attempts never count as evidence either way.
+ */
+export function providerPresence(
+  provider: Pick<ProviderQuota, "state" | "attempts">,
+  incidentalSources: readonly string[] = [],
+): ProviderPresence {
+  if (provider.state.status === "fresh" || provider.state.status === "stale") {
+    return "live";
+  }
+  const attempts = provider.attempts ?? [];
+  if (attempts.length === 0) return "attention";
+  const foundSomething = attempts.some(
+    (attempt) =>
+      !incidentalSources.includes(attempt.source) &&
+      (attempt.status !== "skipped" ||
+        attempt.credentialPresent === true ||
+        attempt.degraded === true),
+  );
+  return foundSomething ? "attention" : "absent";
 }
