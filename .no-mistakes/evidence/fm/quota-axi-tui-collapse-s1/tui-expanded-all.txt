@@ -1,0 +1,61 @@
+  quota-axi · 2026-09-23 06:40 GMT+9:30 · 1 live · 3 need attention · 12 not set up
+
+╭─ ● agy ───────────────────────────────── cli ─╮  ╭─ ○ claude ──────────────────────────── error ─╮
+│                                               │  │                                               │
+│   75% gemini weekly · gemini runway unknown   │  │   keychain presence check failed              │
+│   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━──────────   │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+│   gemini… ━━━━━━━━━━━━━━━━╸─────  75%  26652d │  │                                               │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+╭─ ○ codex ──────────────────────── signed out ─╮  ╭─ ○ cursor ──────────────────────────── error ─╮
+│                                               │  │                                               │
+│   Codex sign-in required                      │  │   sqlite3 unavailable                         │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+  ○ not set up · 12
+
+╭─ ○ copilot ────────────────────── signed out ─╮  ╭─ ○ grok ───────────────────────── signed out ─╮
+│                                               │  │                                               │
+│   GitHub Copilot sign-in required             │  │   Grok sign-in required                       │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+╭─ ○ kimi ───────────────────────── signed out ─╮  ╭─ ○ zai ────────────────────────── signed out ─╮
+│                                               │  │                                               │
+│   kimi credential unavailable                 │  │   zai credential unavailable                  │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+╭─ ○ alibaba ───────────────────── unavailable ─╮  ╭─ ○ opencode-go ────────────────── signed out ─╮
+│                                               │  │                                               │
+│   bl cli unavailable                          │  │   opencode go credential unavailable          │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+╭─ ○ commandcode ────────────────── signed out ─╮  ╭─ ○ minimax ────────────────────── signed out ─╮
+│                                               │  │                                               │
+│   commandcode sign in required                │  │   minimax credential unavailable              │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+╭─ ○ mimo ───────────────────────── signed out ─╮  ╭─ ○ deepseek ───────────────────── signed out ─╮
+│                                               │  │                                               │
+│   mimo credential unavailable                 │  │   deepseek credential unavailable             │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+╭─ ○ openrouter ─────────────────── signed out ─╮  ╭─ ○ elevenlabs ─────────────────── signed out ─╮
+│                                               │  │                                               │
+│   openrouter credential unavailable           │  │   elevenlabs credential unavailable           │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯

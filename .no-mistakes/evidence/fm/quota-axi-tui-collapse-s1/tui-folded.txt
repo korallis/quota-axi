@@ -1,0 +1,20 @@
+  quota-axi · 2026-09-23 06:40 GMT+9:30 · 1 live · 3 need attention · 12 not set up
+
+╭─ ● agy ───────────────────────────────── cli ─╮  ╭─ ○ claude ──────────────────────────── error ─╮
+│                                               │  │                                               │
+│   75% gemini weekly · gemini runway unknown   │  │   keychain presence check failed              │
+│   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━──────────   │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+│   gemini… ━━━━━━━━━━━━━━━━╸─────  75%  26652d │  │                                               │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+╭─ ○ codex ──────────────────────── signed out ─╮  ╭─ ○ cursor ──────────────────────────── error ─╮
+│                                               │  │                                               │
+│   Codex sign-in required                      │  │   sqlite3 unavailable                         │
+│   excluded from fleet totals                  │  │   excluded from fleet totals                  │
+│                                               │  │                                               │
+╰───────────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+
+  ○ not set up  copilot · grok · kimi · zai · alibaba · opencode-go · commandcode · minimax · mimo
+                deepseek · openrouter · elevenlabs   quota-axi auth shows where each is read
