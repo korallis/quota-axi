@@ -1,0 +1,11 @@
+bin: /Users/kunchen/.no-mistakes/worktrees/1c5c6552f798/01M35BC3PC2DBQBZH80PFX0HF5/dist/bin/quota-axi.js
+description: Report local agent-provider quota windows for routing-aware agents
+generatedAt: "2026-09-22T20:03:29.454Z"
+quota[0]:
+exhaustion[0]:
+attention[1]{provider,scope,kind,detail,remedy}:
+  opencode-go,all,auth_required,opencode_go_credential_unavailable,none
+help[1]:
+  Run `quota-axi --full` for windows, pace, reserve, and account evidence
+
+[exit status: 1]
