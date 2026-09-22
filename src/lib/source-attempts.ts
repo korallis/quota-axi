@@ -59,8 +59,10 @@ export type ProviderPresence = "live" | "attention" | "absent";
 /**
  * Classify a provider reading by the evidence its own attempts carry. A source
  * named in `incidentalSources` can hold a credential without showing the user
- * has this provider (a GitHub CLI login is not Copilot access), so its
- * attempts never count as evidence either way.
+ * has this provider (a GitHub CLI login is not Copilot access), but only a
+ * definitive auth rejection from that source is ignored. Every other outcome
+ * must itself positively establish ordinary credential absence before the
+ * provider can fold away.
  */
 export function providerPresence(
   provider: Pick<ProviderQuota, "state" | "attempts">,
@@ -71,12 +73,22 @@ export function providerPresence(
   }
   const attempts = provider.attempts ?? [];
   if (attempts.length === 0) return "attention";
-  const foundSomething = attempts.some(
+  const allAbsent = attempts.every(
     (attempt) =>
-      !incidentalSources.includes(attempt.source) &&
-      (attempt.status !== "skipped" ||
-        attempt.credentialPresent === true ||
-        attempt.degraded === true),
+      (incidentalSources.includes(attempt.source) &&
+        attempt.status === "failed" &&
+        provider.state.status === "auth_required") ||
+      isCredentialAbsentAttempt(attempt),
   );
-  return foundSomething ? "attention" : "absent";
+  return allAbsent ? "absent" : "attention";
+}
+
+function isCredentialAbsentAttempt(attempt: SourceAttempt): boolean {
+  return (
+    attempt.status === "skipped" &&
+    attempt.credentialPresent !== true &&
+    attempt.degraded !== true &&
+    (attempt.error === "credentials_missing" ||
+      /_credential_unavailable$/.test(attempt.error ?? ""))
+  );
 }

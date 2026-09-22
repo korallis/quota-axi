@@ -661,27 +661,48 @@ describe("GitHub Copilot credential sources", () => {
     const presence = (result: Awaited<ReturnType<typeof fetchQuota>>) =>
       providerPresence(result, copilotAdapter.incidentalSources);
 
-    it("reads a GitHub CLI login alone as not set up, not as broken Copilot", async () => {
-      // A keyring login, an unreadable store, and a token Copilot refuses all
-      // describe gh, not Copilot, so a gh-only user folds Copilot away.
+    it("folds only a GitHub CLI login definitively refused Copilot access", async () => {
       writeGhHosts(
         "github.com:\n    users:\n        fixture-user:\n    user: fixture-user\n",
       );
       stubUserEndpoint({});
       const keyring = await fetchQuota(options);
       expect(keyring.attempts?.[2]?.credentialPresent).toBe(true);
-      expect(presence(keyring)).toBe("absent");
+      expect(presence(keyring)).toBe("attention");
 
       writeGhHosts("github.com:\n\toauth_token: gho_cli_fixture\n");
-      expect(presence(await fetchQuota(options))).toBe("absent");
+      expect(presence(await fetchQuota(options))).toBe("attention");
 
       writeGhToken("gho_revoked_fixture");
       const api = stubUserEndpoint({ gho_revoked_fixture: 403 });
       const rejected = await fetchQuota(options);
       expect(api.bearers).toEqual(["Bearer gho_revoked_fixture"]);
-      expect(rejected.attempts?.[2]?.status).toBe("failed");
+      expect(rejected.attempts?.[2]).toMatchObject({
+        status: "failed",
+      });
       expect(presence(rejected)).toBe("absent");
     });
+
+    it.each([
+      ["a server failure", 500, "error"],
+      ["a rate limit", 429, "rate_limited"],
+    ])(
+      "keeps Copilot in view after %s on a GitHub CLI credential",
+      async (_label, status, providerStatus) => {
+        writeGhToken("gho_cli_fixture");
+        stubUserEndpoint({ gho_cli_fixture: status });
+
+        const result = await fetchQuota(options);
+
+        expect(result.state.status).toBe(providerStatus);
+        expect(result.attempts?.[2]).toMatchObject({
+          source: "gh:hosts.yml",
+          status: "failed",
+        });
+        expect(result.attempts?.[2]?.degraded).toBeUndefined();
+        expect(presence(result)).toBe("attention");
+      },
+    );
 
     it("keeps Copilot in view when its own store holds a credential", async () => {
       writeAppsJson({ "github.com": { oauth_token: "stale-apps-token" } });

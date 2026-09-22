@@ -1289,8 +1289,8 @@ describe("CLI quota rendering", () => {
 describe("human report folding for providers that are not set up", () => {
   /**
    * One live provider, one whose credential is present behind a prompt, a
-   * Copilot whose only credential is a GitHub CLI login, and every other
-   * provider with nothing set up at all.
+   * Copilot whose GitHub CLI login was definitively denied Copilot access, and
+   * every other provider with nothing set up at all.
    */
   function stubFoldFleet(): void {
     useTempCache();
@@ -1325,9 +1325,8 @@ describe("human report folding for providers that are not set up", () => {
           },
           {
             source: "gh:hosts.yml",
-            status: "skipped",
-            error: "credentials_keyring_storage",
-            credentialPresent: true,
+            status: "failed",
+            error: "GitHub Copilot sign-in required",
           },
         ],
       }),

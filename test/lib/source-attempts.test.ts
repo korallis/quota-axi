@@ -134,19 +134,6 @@ describe("provider presence classification", () => {
         ]),
       ),
     ).toBe("absent");
-    // A tool that is simply not installed says the same thing.
-    expect(
-      providerPresence(
-        reading("unavailable", [
-          {
-            source: "cli",
-            status: "skipped",
-            error: "agy CLI is not installed",
-            degraded: false,
-          },
-        ]),
-      ),
-    ).toBe("absent");
   });
 
   it("keeps a provider whose credential exists in view, however it failed", () => {
@@ -178,31 +165,59 @@ describe("provider presence classification", () => {
   it("never folds a provider whose absence was not shown", () => {
     expect(providerPresence(reading("error"))).toBe("attention");
     expect(providerPresence(reading("error", []))).toBe("attention");
+    for (const attempt of [
+      {
+        source: "cli",
+        status: "skipped",
+        error: "account_unconfirmed",
+        degraded: false,
+      },
+      {
+        source: "keychain",
+        status: "skipped",
+        error: "secure_store_unsupported",
+        degraded: false,
+      },
+      {
+        source: "cli",
+        status: "skipped",
+        error: "agy CLI is not installed",
+        degraded: false,
+      },
+    ] satisfies SourceAttempt[]) {
+      expect(providerPresence(reading("unavailable", [attempt]))).toBe(
+        "attention",
+      );
+    }
   });
 
-  it("ignores a declared incidental source as evidence either way", () => {
-    const ghLogin: SourceAttempt = {
+  it("ignores only definitive auth rejection from an incidental source", () => {
+    const absentApps: SourceAttempt = {
+      source: "apps-json",
+      status: "skipped",
+      error: "credentials_missing",
+    };
+    const uncertainGh: SourceAttempt = {
       source: "gh:hosts.yml",
       status: "skipped",
       error: "credentials_keyring_storage",
       credentialPresent: true,
     };
-    const ghRejected: SourceAttempt = {
+    const rejectedGh: SourceAttempt = {
       source: "gh:hosts.yml",
       status: "failed",
       error: "GitHub Copilot sign-in required",
     };
-    for (const gh of [ghLogin, ghRejected]) {
-      const copilot = reading("auth_required", [
-        {
-          source: "apps-json",
-          status: "skipped",
-          error: "credentials_missing",
-        },
-        gh,
-      ]);
-      expect(providerPresence(copilot)).toBe("attention");
-      expect(providerPresence(copilot, ["gh:hosts.yml"])).toBe("absent");
-    }
+
+    expect(
+      providerPresence(reading("auth_required", [absentApps, uncertainGh]), [
+        "gh:hosts.yml",
+      ]),
+    ).toBe("attention");
+    expect(
+      providerPresence(reading("auth_required", [absentApps, rejectedGh]), [
+        "gh:hosts.yml",
+      ]),
+    ).toBe("absent");
   });
 });

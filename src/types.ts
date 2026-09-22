@@ -356,9 +356,8 @@ export type ProviderAdapter = {
   label: string;
   /**
    * Credential sources that can hold a credential without showing the user
-   * has this provider, such as Copilot's GitHub CLI fallback. Their attempts
-   * are never evidence of use when the human report folds providers that are
-   * not set up.
+   * has this provider, such as Copilot's GitHub CLI fallback. A definitive
+   * auth rejection from one of these sources is not evidence of provider use.
    */
   incidentalSources?: readonly string[];
   discoverAccounts?(): Promise<ProviderAccount[] | undefined>;
