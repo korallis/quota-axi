@@ -135,6 +135,25 @@ describe("shared stale cache bound", () => {
     expect(servedIds(windows, null)).toEqual(["ahead"]);
   });
 
+  it("serves nothing when the snapshot was written in the future", () => {
+    // A clock that ran ahead at write time and was later corrected leaves the
+    // snapshot's age unknowable, so even a reset-bearing window is withheld.
+    const windows = [
+      window("monthly", "monthly"),
+      window("ahead", "weekly", { resetsAt: new Date(NOW + 1).toISOString() }),
+    ];
+    expect(servedIds(windows, NOW + 30 * DAY_MS)).toEqual([]);
+    expect(
+      staleFromCache(
+        cached(windows, NOW + 1),
+        "fetch failed",
+        ["web"],
+        [],
+        NOW,
+      ),
+    ).toBe(undefined);
+  });
+
   it("serves only reset-bearing windows under the never policy", () => {
     const windows = [
       window("session", "session"),
@@ -176,5 +195,22 @@ describe("shared stale cache bound", () => {
       },
     });
     expect(report?.windows).toHaveLength(1);
+  });
+
+  it("drops untrusted ids only for the windows the filter removed", () => {
+    const snapshot = cached([
+      window("limit:1", "unknown"),
+      window("ahead", "weekly", {
+        resetsAt: new Date(NOW + DAY_MS).toISOString(),
+      }),
+    ]);
+    snapshot.state.untrustedWindowIds = ["limit:1", "usages:limit_5h"];
+    const report = staleFromCache(snapshot, "fetch failed", ["web"], [], NOW);
+    expect(report?.windows.map(({ id }) => id)).toEqual(["ahead"]);
+    expect(report?.state.untrustedWindowIds).toEqual(["usages:limit_5h"]);
+
+    snapshot.state.untrustedWindowIds = ["limit:1"];
+    const pruned = staleFromCache(snapshot, "fetch failed", ["web"], [], NOW);
+    expect(pruned?.state).not.toHaveProperty("untrustedWindowIds");
   });
 });

@@ -83,7 +83,9 @@ export type ResetlessStalePolicy = "age_bound" | "never";
  * A resetless window with no known cycle length (credits balances, model or
  * unknown windows without `windowSeconds`) has no age at which that holds, so
  * it is dropped rather than given an invented shelf life, and so is every
- * resetless window when the snapshot's `refreshedAt` cannot be read.
+ * resetless window when the snapshot's `refreshedAt` cannot be read. A
+ * `refreshedAt` after `now` means the clock moved backwards since the write,
+ * so the snapshot's age is unknowable and nothing is served.
  */
 export function servableStaleWindows(
   cached: ProviderQuota,
@@ -93,7 +95,8 @@ export function servableStaleWindows(
   const refreshedAt = cached.state.refreshedAt
     ? Date.parse(cached.state.refreshedAt)
     : Number.NaN;
-  const ageMilliseconds = Math.max(0, now - refreshedAt);
+  if (refreshedAt > now) return [];
+  const ageMilliseconds = now - refreshedAt;
   return cached.windows.filter((window) => {
     const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
     if (Number.isFinite(resetsAt)) return resetsAt > now;
@@ -101,6 +104,25 @@ export function servableStaleWindows(
     const maxAgeSeconds = resetlessStaleMaxAgeSeconds(window);
     return maxAgeSeconds > 0 && ageMilliseconds < maxAgeSeconds * 1_000;
   });
+}
+
+/**
+ * The cached `untrustedWindowIds` a stale report built from `windows` may
+ * still carry: an id naming a cached window the stale filter dropped goes with
+ * it, while an id that never named a cached window (such as Kimi's
+ * `usages:<key>` marker for a declared entry with no usable ratio) stays,
+ * because it still keeps the account bound partial.
+ */
+export function servableUntrustedWindowIds(
+  cached: ProviderQuota,
+  windows: QuotaWindow[],
+): string[] | undefined {
+  const served = new Set(windows.map(({ id }) => id));
+  const dropped = new Set(
+    cached.windows.map(({ id }) => id).filter((id) => !served.has(id)),
+  );
+  const ids = cached.state.untrustedWindowIds?.filter((id) => !dropped.has(id));
+  return ids && ids.length > 0 ? ids : undefined;
 }
 
 /**
@@ -138,19 +160,17 @@ export function staleFromCache(
 ): ProviderQuota | undefined {
   const windows = servableStaleWindows(cached, now);
   if (windows.length === 0) return undefined;
-  return {
-    ...cached,
-    source: "cache",
-    windows,
-    state: {
-      ...cached.state,
-      status: "stale",
-      stale: true,
-      error,
-      sourcesTried: [...new Set([...sourcesTried, "cache"])],
-    },
-    attempts,
+  const state: ProviderQuota["state"] = {
+    ...cached.state,
+    status: "stale",
+    stale: true,
+    error,
+    sourcesTried: [...new Set([...sourcesTried, "cache"])],
   };
+  const untrustedWindowIds = servableUntrustedWindowIds(cached, windows);
+  if (untrustedWindowIds) state.untrustedWindowIds = untrustedWindowIds;
+  else delete state.untrustedWindowIds;
+  return { ...cached, source: "cache", windows, state, attempts };
 }
 
 export function statusFromError(error: string): ProviderStatus {

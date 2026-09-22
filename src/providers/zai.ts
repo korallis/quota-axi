@@ -25,7 +25,7 @@ import type {
   SourceAttempt,
 } from "../types.js";
 import { VERSION } from "../version.js";
-import { servableStaleWindows } from "./common.js";
+import { servableStaleWindows, servableUntrustedWindowIds } from "./common.js";
 
 const ZAI_QUOTA_PATH = "/api/monitor/usage/quota/limit";
 const OPERATION_DEADLINE_MS = 15_000;
@@ -447,6 +447,7 @@ function staleZaiReport(
   if (!Number.isFinite(Date.parse(cached.state.refreshedAt))) return undefined;
   const windows = servableStaleWindows(cached, now);
   if (windows.length === 0) return undefined;
+  const untrustedWindowIds = servableUntrustedWindowIds(cached, windows);
 
   return {
     provider: "zai",
@@ -460,9 +461,7 @@ function staleZaiReport(
       refreshedAt: cached.state.refreshedAt,
       error,
       ...(retryAfter ? { retryAfter } : {}),
-      ...(cached.state.untrustedWindowIds
-        ? { untrustedWindowIds: cached.state.untrustedWindowIds }
-        : {}),
+      ...(untrustedWindowIds ? { untrustedWindowIds } : {}),
       sourcesTried: [...attempts.map(({ source }) => source), "cache"],
     },
     attempts,

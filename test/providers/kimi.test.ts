@@ -1584,6 +1584,27 @@ describe("Kimi credential outcomes and cache policy", () => {
     });
   });
 
+  it("names only surviving or unwindowed untrusted ids in a stale report", async () => {
+    const cached = cachedQuota([
+      quotaWindow("weekly", "weekly", "2027-02-08T04:05:06.000Z"),
+      quotaWindow("limit:2", "unknown"),
+    ]);
+    cached.state.untrustedWindowIds = ["limit:2", "usages:limit_5h"];
+    const report = await transientWithCache(cached);
+
+    expect(report.windows.map(({ id }) => id)).toEqual(["weekly"]);
+    expect(report.state.untrustedWindowIds).toEqual(["usages:limit_5h"]);
+  });
+
+  it("serves no stale report from a snapshot written in the future", async () => {
+    const report = await transientWithCache(cachedQuota(undefined, NOW + 1));
+    expect(report).toMatchObject({
+      source: "unavailable",
+      windows: [],
+      state: { status: "error", stale: false, error: "provider_unavailable" },
+    });
+  });
+
   it("returns the current failure when no stale window survives", async () => {
     const report = await transientWithCache(
       cachedQuota(

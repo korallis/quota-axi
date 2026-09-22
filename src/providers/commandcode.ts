@@ -31,7 +31,7 @@ import {
   commandCodeCacheContextId,
   publishCommandCodeReadingContextId,
 } from "./commandcode-cache-context.js";
-import { servableStaleWindows } from "./common.js";
+import { servableStaleWindows, servableUntrustedWindowIds } from "./common.js";
 import {
   selectCredential,
   type CandidateLocalState,
@@ -1075,6 +1075,7 @@ function staleCommandCodeReport(
   if (!Number.isFinite(Date.parse(cached.state.refreshedAt))) return undefined;
   const windows = servableStaleWindows(cached, now);
   if (windows.length === 0) return undefined;
+  const untrustedWindowIds = servableUntrustedWindowIds(cached, windows);
 
   return {
     provider: "commandcode",
@@ -1089,9 +1090,7 @@ function staleCommandCodeReport(
       refreshedAt: cached.state.refreshedAt,
       error: failure.code,
       ...(failure.retryAfter ? { retryAfter: failure.retryAfter } : {}),
-      ...(cached.state.untrustedWindowIds
-        ? { untrustedWindowIds: cached.state.untrustedWindowIds }
-        : {}),
+      ...(untrustedWindowIds ? { untrustedWindowIds } : {}),
       sourcesTried: [...attempts.map(({ source }) => source), "cache"],
     },
     attempts,

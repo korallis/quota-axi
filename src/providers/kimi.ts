@@ -14,7 +14,7 @@ import type {
   SourceAttempt,
 } from "../types.js";
 import { VERSION } from "../version.js";
-import { servableStaleWindows } from "./common.js";
+import { servableStaleWindows, servableUntrustedWindowIds } from "./common.js";
 import { publishKimiReadingContextId } from "./kimi-cache-context.js";
 import {
   selectCredential,
@@ -927,7 +927,7 @@ function staleKimiReport(
   }
   const refreshedAt = Date.parse(cached.state.refreshedAt);
   if (!Number.isFinite(refreshedAt)) return undefined;
-  const ageMilliseconds = Math.max(0, now - refreshedAt);
+  const ageMilliseconds = now - refreshedAt;
   const windows = servableStaleWindows(cached, now).filter((window) => {
     if (window.resetsAt && Number.isFinite(Date.parse(window.resetsAt))) {
       return true;
@@ -937,6 +937,7 @@ function staleKimiReport(
     return ageMilliseconds < maxAgeSeconds * 1_000;
   });
   if (windows.length === 0) return undefined;
+  const untrustedWindowIds = servableUntrustedWindowIds(cached, windows);
 
   return {
     provider: "kimi",
@@ -950,9 +951,7 @@ function staleKimiReport(
       error,
       ...(retryAfter ? { retryAfter } : {}),
       ...(authStatus ? { authStatus } : {}),
-      ...(cached.state.untrustedWindowIds
-        ? { untrustedWindowIds: cached.state.untrustedWindowIds }
-        : {}),
+      ...(untrustedWindowIds ? { untrustedWindowIds } : {}),
       sourcesTried: [...attempts.map(({ source }) => source), "cache"],
     },
     attempts,
