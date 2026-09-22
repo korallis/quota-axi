@@ -1608,6 +1608,37 @@ describe("default TOON decision blocks", () => {
     ]);
   });
 
+  it("never adds a false unresolved_windows row for a never-set-up OpenCode Go", async () => {
+    useTempCache();
+    PROVIDERS["opencode-go"] = providerWithQuota(signedOutOpenCodeGoQuota());
+
+    const output = await capture(["--provider", "opencode-go"]);
+
+    expect(toonRows(output, "attention")).toContainEqual([
+      "opencode-go",
+      "all",
+      "auth_required",
+      "opencode_go_credential_unavailable",
+      "none",
+    ]);
+    expect(output).not.toContain("unresolved_windows");
+  });
+
+  it("still reports unresolved windows for a set-up OpenCode Go missing a stacked cap", async () => {
+    useTempCache();
+    PROVIDERS["opencode-go"] = providerWithQuota(freshOpenCodeGoQuota());
+
+    const output = await capture(["--provider", "opencode-go"]);
+
+    expect(toonRows(output, "attention")).toContainEqual([
+      "opencode-go",
+      "all",
+      "unresolved_windows",
+      "rolling + monthly",
+      "none",
+    ]);
+  });
+
   it("emits Cursor IDE and Grok Bot as separate quota[] rows", async () => {
     useTempCache();
     vi.useFakeTimers();
@@ -2771,6 +2802,22 @@ function freshOpenCodeGoQuota(): ProviderQuota {
       status: "fresh",
       stale: false,
       refreshedAt: "2026-07-06T18:10:00Z",
+      sourcesTried: ["opencode:auth.json"],
+    },
+  };
+}
+
+/** A never-set-up OpenCode Go: no credential, so no windows at all. */
+function signedOutOpenCodeGoQuota(): ProviderQuota {
+  return {
+    provider: "opencode-go",
+    label: "OpenCode Go",
+    source: "unavailable",
+    windows: [],
+    state: {
+      status: "auth_required",
+      stale: false,
+      error: "opencode_go_credential_unavailable",
       sourcesTried: ["opencode:auth.json"],
     },
   };

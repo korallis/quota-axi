@@ -330,6 +330,19 @@ describe("quota semantics", () => {
     ]);
   });
 
+  it("reports OpenCode Go with no windows as unknown, not partial with all caps unresolved", () => {
+    const result = withQuotaSemantics(
+      provider("opencode-go", []),
+      GENERATED_AT,
+    );
+
+    expect(result.quotaSemantics).toMatchObject({
+      status: "unknown",
+      effectiveAvailability: [],
+      unresolvedWindowIds: [],
+    });
+  });
+
   it("treats OpenCode Go rolling, weekly, and monthly windows as stacked plan caps", () => {
     const result = withQuotaSemantics(
       provider("opencode-go", [

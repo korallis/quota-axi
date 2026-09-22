@@ -221,6 +221,13 @@ function opencodeGoSemantics(
   windows: QuotaWindow[],
   generatedAt: string,
 ): QuotaSemantics {
+  // No windows at all means the provider was never set up (or is signed
+  // out), not that a subset of the plan's stacked caps is missing - that
+  // distinction is handled below. Fall through to the standard no-window
+  // reading instead of naming all three caps as unresolved.
+  if (windows.length === 0) {
+    return unknownSemantics(windows, "OpenCode Go reported no quota windows.");
+  }
   const plan = windows.filter(({ id }) =>
     ["rolling", "five_hour", "weekly", "monthly"].includes(id),
   );
