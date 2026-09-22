@@ -1556,6 +1556,34 @@ describe("Kimi credential outcomes and cache policy", () => {
     expect(atSevenDays.windows).toEqual([]);
   });
 
+  it("keeps the five-hour bound for a resetless monthly window", async () => {
+    const windows = [
+      quotaWindow("month_total", "monthly"),
+      quotaWindow("weekly", "weekly"),
+    ];
+    const justBeforeFiveHours = await transientWithCache(
+      cachedQuota(windows, NOW - 18_000_000 + 1),
+    );
+    expect(justBeforeFiveHours.windows.map(({ id }) => id)).toEqual([
+      "month_total",
+      "weekly",
+    ]);
+
+    const atFiveHours = await transientWithCache(
+      cachedQuota(windows, NOW - 18_000_000),
+    );
+    expect(atFiveHours.windows.map(({ id }) => id)).toEqual(["weekly"]);
+
+    const onlyMonthly = await transientWithCache(
+      cachedQuota([quotaWindow("month_total", "monthly")], NOW - 18_000_000),
+    );
+    expect(onlyMonthly).toMatchObject({
+      source: "unavailable",
+      windows: [],
+      state: { status: "error", stale: false, error: "provider_unavailable" },
+    });
+  });
+
   it("returns the current failure when no stale window survives", async () => {
     const report = await transientWithCache(
       cachedQuota(

@@ -62,6 +62,7 @@ const KEYCHAIN_ITEM_UNREACHABLE_EXIT_CODE = 44;
 const KEYCHAIN_UNREACHABLE_ERROR = "keychain_unreachable";
 const DEFAULT_KEYCHAIN_ACCOUNT = "claude-code-user";
 const SAFE_KEYCHAIN_ACCOUNT = /^[a-zA-Z0-9._-]+$/;
+const FIVE_HOURS_MS = 5 * 60 * 60 * 1_000;
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1_000;
 const FIVE_HOURS_SECONDS = 18_000;
 const SEVEN_DAYS_SECONDS = 604_800;
@@ -905,9 +906,16 @@ function staleClaudeReport(
   }
   const refreshedAt = Date.parse(cached.state.refreshedAt);
   if (!Number.isFinite(refreshedAt) || refreshedAt > now) return undefined;
-  if (now - refreshedAt >= SEVEN_DAYS_MS) return undefined;
+  const ageMilliseconds = now - refreshedAt;
+  if (ageMilliseconds >= SEVEN_DAYS_MS) return undefined;
 
-  const windows = servableStaleWindows(cached, now);
+  const windows = servableStaleWindows(cached, now).filter((window) => {
+    if (window.resetsAt && Number.isFinite(Date.parse(window.resetsAt))) {
+      return true;
+    }
+    const maxAge = resetlessWindowMaxAge(window);
+    return maxAge !== undefined && ageMilliseconds < maxAge;
+  });
   if (windows.length === 0) return undefined;
 
   const report: ProviderQuota = {
@@ -928,6 +936,20 @@ function staleClaudeReport(
   };
   if (failure.authStatus) report.state.authStatus = failure.authStatus;
   return failure.usageFetchFailure ? withUsageFetchFailure(report) : report;
+}
+
+function resetlessWindowMaxAge(window: QuotaWindow): number | undefined {
+  if (window.kind === "weekly" || window.kind === "model") {
+    return SEVEN_DAYS_MS;
+  }
+  if (
+    window.kind === "session" ||
+    window.kind === "monthly" ||
+    window.kind === "credits"
+  ) {
+    return FIVE_HOURS_MS;
+  }
+  return undefined;
 }
 
 function claudeFailureFor(error: unknown): ClaudeFailure {

@@ -925,8 +925,17 @@ function staleKimiReport(
   ) {
     return undefined;
   }
-  if (!Number.isFinite(Date.parse(cached.state.refreshedAt))) return undefined;
-  const windows = servableStaleWindows(cached, now);
+  const refreshedAt = Date.parse(cached.state.refreshedAt);
+  if (!Number.isFinite(refreshedAt)) return undefined;
+  const ageMilliseconds = Math.max(0, now - refreshedAt);
+  const windows = servableStaleWindows(cached, now).filter((window) => {
+    if (window.resetsAt && Number.isFinite(Date.parse(window.resetsAt))) {
+      return true;
+    }
+    const maxAgeSeconds =
+      window.kind === "weekly" ? WEEK_SECONDS : FIVE_HOURS_SECONDS;
+    return ageMilliseconds < maxAgeSeconds * 1_000;
+  });
   if (windows.length === 0) return undefined;
 
   return {
