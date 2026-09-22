@@ -114,6 +114,14 @@ type ResponseBodyLifetime = {
   cancel(action?: () => Promise<unknown> | undefined): Promise<void>;
 };
 
+/**
+ * The Kimi Code skip that establishes nothing about the account either way: a
+ * configuration quota-axi could not walk to its OAuth reference may name any
+ * slot, so its absence is never shown.
+ */
+export const KIMI_CODE_ENVIRONMENT_UNCONFIRMED =
+  "kimi_code_cli_credential_unconfirmed";
+
 export function createKimiAdapter(
   overrides: Partial<KimiDependencies> = {},
 ): ProviderAdapter {
@@ -132,6 +140,8 @@ export function createKimiAdapter(
   return {
     id: "kimi",
     label: "Kimi",
+    isUncertainSkip: (attempt) =>
+      attempt.error === KIMI_CODE_ENVIRONMENT_UNCONFIRMED,
     fetchQuota(_options: ProviderOptions): Promise<ProviderQuota> {
       if (inFlight) return inFlight;
       const acquisition = acquireKimiQuota(dependencies).finally(() => {
@@ -178,7 +188,7 @@ export function createKimiAdapter(
                   : cliInspection === "invalid_config"
                     ? "kimi_code_cli_config_invalid"
                     : cliInspection === "environment_unconfirmed"
-                      ? "kimi_code_cli_credential_unconfirmed"
+                      ? KIMI_CODE_ENVIRONMENT_UNCONFIRMED
                       : undefined;
 
       return {
@@ -773,7 +783,7 @@ function cliCredentialFailureFor(
    * would retire cached numbers that are still the best it can say.
    */
   if (resolution.status === "environment_unconfirmed") {
-    return new KimiFailure("kimi_code_cli_credential_unconfirmed", {
+    return new KimiFailure(KIMI_CODE_ENVIRONMENT_UNCONFIRMED, {
       staleEligible: true,
     });
   }

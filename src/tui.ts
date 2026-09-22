@@ -175,13 +175,6 @@ export function renderQuotaTui(
   lines.push([]);
   if (carded.length > 0) {
     lines.push(...layoutCards(carded.map(card), twoColumn));
-  } else if (!options.showNotSetUp) {
-    lines.push([
-      {
-        text: "  nothing to measure yet · no provider credentials found on this machine",
-        style: "label",
-      },
-    ]);
   }
   if (absent.length > 0) {
     if (lines.length > 2) lines.push([]);

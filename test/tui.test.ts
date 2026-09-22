@@ -1236,7 +1236,7 @@ describe("providers that are not set up", () => {
     expect(lines.join("\n")).not.toContain("╭─ ○ zai ");
   });
 
-  it("says nothing is set up instead of drawing an empty grid", () => {
+  it("renders only the header and the footer when nothing is set up", () => {
     const response: QuotaAxiResponse = {
       generatedAt: GENERATED_AT,
       schemaVersion: 5,
@@ -1245,8 +1245,6 @@ describe("providers that are not set up", () => {
 
     expect(frame(response)).toEqual([
       "  quota-axi · 2026-08-06 16:21 PDT · 0 live · 0 need attention · 3 not set up",
-      "",
-      "  nothing to measure yet · no provider credentials found on this machine",
       "",
       "  ○ not set up  zai · mimo · deepseek   quota-axi auth shows where each is read",
     ]);

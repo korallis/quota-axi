@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { describe, expect, it, vi } from "vitest";
 import { withQuotaSemantics } from "../../src/interpretation.js";
+import { providerPresence } from "../../src/lib/source-attempts.js";
 import {
   createKimiAdapter,
   normalizeKimiPayload,
@@ -1490,6 +1491,27 @@ describe("Kimi credential outcomes and cache policy", () => {
     }).fetchQuota(OPTIONS);
     expect(report.state.status).toBe("error");
     expect(report.source).toBe("unavailable");
+  });
+
+  it("keeps an environment it could not confirm in view rather than reading it as absent", async () => {
+    const unconfirmed = testAdapter({
+      broker: broker({ status: "missing" }),
+      cliCredentialSource: cliCredentialSource({
+        status: "environment_unconfirmed",
+      }),
+    });
+    const absent = testAdapter({
+      broker: broker({ status: "missing" }),
+      cliCredentialSource: cliCredentialSource({ status: "missing" }),
+    });
+
+    expect(
+      providerPresence(await unconfirmed.fetchQuota(OPTIONS), unconfirmed),
+    ).toBe("attention");
+    // Both stores plainly empty is the absence that may still fold.
+    expect(providerPresence(await absent.fetchQuota(OPTIONS), absent)).toBe(
+      "absent",
+    );
   });
 
   it("reports auth availability without a path or credential", async () => {
