@@ -83,7 +83,7 @@ describe("renderQuotaTui structure", () => {
   it("summarizes the fleet in the dim header with local time", () => {
     const lines = render();
     expect(lines[0]).toBe(
-      "  quota-axi · 2026-08-06 16:21 PDT · 3 live · 3 need attention",
+      "  quota-axi · 2026-08-06 16:21 PDT · 3 live · 3 need attention · 0 not set up",
     );
   });
 
@@ -1244,7 +1244,7 @@ describe("providers that are not set up", () => {
     };
 
     expect(frame(response)).toEqual([
-      "  quota-axi · 2026-08-06 16:21 PDT · 0 live · 3 not set up",
+      "  quota-axi · 2026-08-06 16:21 PDT · 0 live · 0 need attention · 3 not set up",
       "",
       "  nothing to measure yet · no provider credentials found on this machine",
       "",
@@ -1253,12 +1253,24 @@ describe("providers that are not set up", () => {
 
     const expanded = frame(response, { showNotSetUp: true });
     expect(expanded.slice(0, 4)).toEqual([
-      "  quota-axi · 2026-08-06 16:21 PDT · 0 live · 3 not set up",
+      "  quota-axi · 2026-08-06 16:21 PDT · 0 live · 0 need attention · 3 not set up",
       "",
       "  ○ not set up · 3",
       "",
     ]);
     expect(expanded[4]).toMatch(/^╭─ ○ zai .*╭─ ○ mimo /);
+  });
+
+  it("names every tier in the header, including the ones that are empty", () => {
+    const lines = frame({
+      generatedAt: GENERATED_AT,
+      schemaVersion: 5,
+      providers: [claudeProvider(), codexProvider()],
+    });
+
+    expect(lines[0]).toBe(
+      "  quota-axi · 2026-08-06 16:21 PDT · 2 live · 0 need attention · 0 not set up",
+    );
   });
 
   it("names a folded account lane by provider and account key", () => {

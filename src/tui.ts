@@ -295,16 +295,14 @@ function headerText(
   tiers: Record<ProviderPresence, ProviderQuota[]>,
   timeZone?: string,
 ): string {
+  const attention = tiers.attention.length;
   const parts = [
     "quota-axi",
     formatHeaderTime(response.generatedAt, timeZone),
     `${tiers.live.length} live`,
+    `${attention} ${attention === 1 ? "needs" : "need"} attention`,
+    `${tiers.absent.length} not set up`,
   ];
-  const attention = tiers.attention.length;
-  if (attention > 0) {
-    parts.push(`${attention} ${attention === 1 ? "needs" : "need"} attention`);
-  }
-  if (tiers.absent.length > 0) parts.push(`${tiers.absent.length} not set up`);
   return parts.filter(Boolean).join(" · ");
 }
 
