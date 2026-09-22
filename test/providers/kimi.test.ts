@@ -1532,6 +1532,8 @@ describe("Kimi credential outcomes and cache policy", () => {
     const windows = [
       quotaWindow("five_hour", "session"),
       quotaWindow("weekly", "weekly"),
+      // No reset and no declared duration: nothing bounds how long it stays
+      // true, so it is never served from cache.
       quotaWindow("limit:2", "unknown"),
     ];
     const justBeforeFiveHours = await transientWithCache(
@@ -1540,7 +1542,6 @@ describe("Kimi credential outcomes and cache policy", () => {
     expect(justBeforeFiveHours.windows.map(({ id }) => id)).toEqual([
       "five_hour",
       "weekly",
-      "limit:2",
     ]);
 
     const atFiveHours = await transientWithCache(

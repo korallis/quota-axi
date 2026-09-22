@@ -782,9 +782,10 @@ function codexFailureReport(
   accountIds: readonly string[] = [],
 ): ProviderQuota {
   const cached = readCachedCodexProvider(accountKey, accountIds);
-  if (cached) {
-    return staleFromCache(cached, error, sourceNames(attempts), attempts);
-  }
+  const stale = cached
+    ? staleFromCache(cached, error, sourceNames(attempts), attempts)
+    : undefined;
+  if (stale) return stale;
   return failedProvider({
     provider: "codex",
     label: "Codex",

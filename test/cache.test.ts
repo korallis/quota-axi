@@ -192,7 +192,15 @@ describe("quota cache", () => {
 
     const later = annotateQuotaAdvice({
       generatedAt: "2026-07-06T19:10:00Z",
-      providers: [staleFromCache(cached!, "fetch failed", ["api"], [])],
+      providers: [
+        staleFromCache(
+          cached!,
+          "fetch failed",
+          ["api"],
+          [],
+          Date.parse("2026-07-06T19:10:00Z"),
+        )!,
+      ],
     });
     expect(later.schemaVersion).toBe(5);
     expect(later.providers[0]?.accountKey).toBeUndefined();
@@ -652,7 +660,8 @@ oauth_host = "https://auth.kimi.ai"
       "fetch failed: synthetic outage",
       ["kimi-code"],
       [],
-    );
+      Date.parse("2026-07-06T18:20:00Z"),
+    )!;
     const monthCode = stale.windows.find(
       (window) => window.id === "month_code",
     );

@@ -16,6 +16,7 @@ import type {
   SourceAttempt,
 } from "../types.js";
 import { VERSION } from "../version.js";
+import { servableStaleWindows } from "./common.js";
 import {
   clearElevenLabsReadingContextId,
   elevenLabsCacheContextId,
@@ -364,11 +365,7 @@ function staleElevenLabsReport(
   // The character allowance has no fixed duration to age against, so only a
   // window whose own reported reset is still ahead survives. A resetless
   // snapshot expires immediately rather than inventing a shelf life.
-  const windows = cached.windows.filter((window) => {
-    if (!window.resetsAt) return false;
-    const resetsAt = Date.parse(window.resetsAt);
-    return Number.isFinite(resetsAt) && resetsAt > now;
-  });
+  const windows = servableStaleWindows(cached, now, "never");
   if (windows.length === 0) return undefined;
 
   return {

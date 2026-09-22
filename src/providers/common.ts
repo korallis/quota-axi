@@ -60,15 +60,88 @@ export function failedProvider(args: {
   };
 }
 
+const FIVE_HOURS_SECONDS = 5 * 60 * 60;
+const WEEK_SECONDS = 7 * 24 * 60 * 60;
+/** The shortest calendar month, so no monthly cycle can end sooner. */
+const SHORTEST_MONTH_SECONDS = 28 * 24 * 60 * 60;
+
+/**
+ * Whether a resetless cached window is served at all. `age_bound` applies
+ * {@link resetlessStaleMaxAgeSeconds}; `never` is for a provider whose window
+ * kind does not fix a cycle length it could be aged against.
+ */
+export type ResetlessStalePolicy = "age_bound" | "never";
+
+/**
+ * The cached windows a stale fallback may still present at `now`.
+ *
+ * A window whose own reported reset is at or before `now` belongs to a cycle
+ * the vendor has already ended, so its figures have stopped being true and it
+ * is dropped. A window without a usable reset is kept only while the snapshot
+ * is younger than the shortest cycle its duration or kind admits: after that
+ * long a reset has certainly happened, even though the vendor never said when.
+ * A resetless window with no known cycle length (credits balances, model or
+ * unknown windows without `windowSeconds`) has no age at which that holds, so
+ * it is dropped rather than given an invented shelf life, and so is every
+ * resetless window when the snapshot's `refreshedAt` cannot be read.
+ */
+export function servableStaleWindows(
+  cached: ProviderQuota,
+  now: number,
+  resetless: ResetlessStalePolicy = "age_bound",
+): QuotaWindow[] {
+  const refreshedAt = cached.state.refreshedAt
+    ? Date.parse(cached.state.refreshedAt)
+    : Number.NaN;
+  const ageMilliseconds = Math.max(0, now - refreshedAt);
+  return cached.windows.filter((window) => {
+    const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
+    if (Number.isFinite(resetsAt)) return resetsAt > now;
+    if (resetless === "never" || !Number.isFinite(refreshedAt)) return false;
+    const maxAgeSeconds = resetlessStaleMaxAgeSeconds(window);
+    return maxAgeSeconds > 0 && ageMilliseconds < maxAgeSeconds * 1_000;
+  });
+}
+
+/**
+ * The longest a resetless window can be served from cache: its own declared
+ * duration, else the shortest cycle its kind admits, else zero (never).
+ */
+export function resetlessStaleMaxAgeSeconds(window: QuotaWindow): number {
+  if (window.windowSeconds !== undefined && window.windowSeconds > 0) {
+    return window.windowSeconds;
+  }
+  switch (window.kind) {
+    case "session":
+      return FIVE_HOURS_SECONDS;
+    case "weekly":
+      return WEEK_SECONDS;
+    case "monthly":
+      return SHORTEST_MONTH_SECONDS;
+    default:
+      return 0;
+  }
+}
+
+/**
+ * Serve a cached snapshot as a stale reading of the current failure, keeping
+ * only the windows {@link servableStaleWindows} still allows. Returns
+ * `undefined` when none survive, so the caller reports the failed read exactly
+ * as it would with no cache at all.
+ */
 export function staleFromCache(
   cached: ProviderQuota,
   error: string,
   sourcesTried: string[],
   attempts: SourceAttempt[],
-): ProviderQuota {
+  now: number = Date.now(),
+): ProviderQuota | undefined {
+  const windows = servableStaleWindows(cached, now);
+  if (windows.length === 0) return undefined;
   return {
     ...cached,
     source: "cache",
+    windows,
     state: {
       ...cached.state,
       status: "stale",

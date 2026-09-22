@@ -14,6 +14,7 @@ import type {
   SourceAttempt,
 } from "../types.js";
 import { VERSION } from "../version.js";
+import { servableStaleWindows } from "./common.js";
 import { publishKimiReadingContextId } from "./kimi-cache-context.js";
 import {
   selectCredential,
@@ -924,18 +925,8 @@ function staleKimiReport(
   ) {
     return undefined;
   }
-  const refreshedAt = Date.parse(cached.state.refreshedAt);
-  if (!Number.isFinite(refreshedAt)) return undefined;
-  const ageMilliseconds = Math.max(0, now - refreshedAt);
-  const windows = cached.windows.filter((window) => {
-    if (window.resetsAt) {
-      const resetsAt = Date.parse(window.resetsAt);
-      if (Number.isFinite(resetsAt)) return resetsAt > now;
-    }
-    const maxAgeSeconds =
-      window.kind === "weekly" ? WEEK_SECONDS : FIVE_HOURS_SECONDS;
-    return ageMilliseconds < maxAgeSeconds * 1_000;
-  });
+  if (!Number.isFinite(Date.parse(cached.state.refreshedAt))) return undefined;
+  const windows = servableStaleWindows(cached, now);
   if (windows.length === 0) return undefined;
 
   return {

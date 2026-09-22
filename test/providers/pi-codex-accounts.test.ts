@@ -824,7 +824,13 @@ describe("Codex Pi sibling account lanes", () => {
             windowSeconds: 604_800,
           },
         ],
-        state: { status: "fresh", stale: false, sourcesTried: ["cli-rpc"] },
+        state: {
+          status: "fresh",
+          stale: false,
+          // A resetless window is aged from here, so it must be recent.
+          refreshedAt: new Date().toISOString(),
+          sourcesTried: ["cli-rpc"],
+        },
       },
     ]);
     writePiAuth({
@@ -1214,6 +1220,8 @@ describe("Codex Pi sibling account lanes", () => {
         state: {
           status: "fresh",
           stale: false,
+          // A resetless window is aged from here, so it must be recent.
+          refreshedAt: new Date().toISOString(),
           sourcesTried: ["pi:openai-codex"],
         },
       },

@@ -154,9 +154,10 @@ export async function fetchQuota(
   }
 
   const cached = readCachedProvider("cursor");
-  if (cached) {
-    return staleFromCache(cached, finalError, sourceNames(attempts), attempts);
-  }
+  const stale = cached
+    ? staleFromCache(cached, finalError, sourceNames(attempts), attempts)
+    : undefined;
+  if (stale) return stale;
 
   return failedProvider({
     provider: "cursor",
