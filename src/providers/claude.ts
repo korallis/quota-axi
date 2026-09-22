@@ -1064,7 +1064,7 @@ function normalizeScopedLimitEntry(raw: unknown): QuotaWindow | undefined {
       id: `model:${modelKey}`,
       label: `${modelName} week`,
       kind: "model",
-      percentUsed: claudeUsageRemainingToUsed(percent),
+      percentUsed: clampPercent(percent),
       resetsAt,
       windowSeconds: SEVEN_DAYS_SECONDS,
     });
@@ -1076,7 +1076,7 @@ function normalizeScopedLimitEntry(raw: unknown): QuotaWindow | undefined {
       id: "five_hour",
       label: "session",
       kind: "session",
-      percentUsed: claudeUsageRemainingToUsed(percent),
+      percentUsed: clampPercent(percent),
       resetsAt,
       windowSeconds: FIVE_HOURS_SECONDS,
     });
@@ -1086,7 +1086,7 @@ function normalizeScopedLimitEntry(raw: unknown): QuotaWindow | undefined {
       id: "seven_day",
       label: "week",
       kind: "weekly",
-      percentUsed: claudeUsageRemainingToUsed(percent),
+      percentUsed: clampPercent(percent),
       resetsAt,
       windowSeconds: SEVEN_DAYS_SECONDS,
     });
@@ -1097,7 +1097,7 @@ function normalizeScopedLimitEntry(raw: unknown): QuotaWindow | undefined {
     id: kind ?? "limit",
     label: kind ?? "limit",
     kind: "unknown",
-    percentUsed: claudeUsageRemainingToUsed(percent),
+    percentUsed: clampPercent(percent),
     resetsAt,
   });
 }
@@ -1799,20 +1799,10 @@ function normalizeWindow(
     id,
     label,
     kind,
-    percentUsed: claudeUsageRemainingToUsed(used),
+    percentUsed: clampPercent(used),
     resetsAt: stringValue(data.resets_at) ?? stringValue(data.reset_at),
     ...(windowSeconds !== undefined ? { windowSeconds } : {}),
   });
-}
-
-/**
- * Claude's OAuth usage endpoint names its subscription-window headroom
- * `utilization`/`percent`; quota-axi stores the complementary used value.
- * `extra_usage.utilization` is intentionally not routed here: Claude Code
- * derives that field from used credits and displays it as percent used.
- */
-function claudeUsageRemainingToUsed(remaining: number): number {
-  return clampPercent(100 - remaining);
 }
 
 function trustedClaudeWindowSeconds(
