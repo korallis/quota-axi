@@ -163,24 +163,6 @@ function codexCredentialKey(
 }
 
 /**
- * Keys folded into a row because their stored account id matched the row's.
- * A fresh reading that names another account disproves that match, so only a
- * folded key whose credential produced the reading still belongs to the row.
- */
-function foldedAccountKeys(
-  report: ProviderQuota,
-  storedAccountId: string | undefined,
-  keys: readonly string[],
-): string[] {
-  const liveAccountId =
-    report.state.status === "fresh" ? report.account?.accountId : undefined;
-  if (liveAccountId === undefined || liveAccountId === storedAccountId) {
-    return [...keys];
-  }
-  return keys.filter((key) => report.accountKeys?.includes(key));
-}
-
-/**
  * The single-winner row covers the key whose credential produced it, plus
  * the other native or built-in Pi key when both store the same account.
  */
@@ -208,12 +190,16 @@ async function fetchSingleWinnerQuota(
   } catch {
     builtinResolution = { status: "error" };
   }
-  const folded =
-    nativeStoredAccountId !== undefined &&
-    nativeStoredAccountId === resolvedAccountId(builtinResolution)
-      ? foldedAccountKeys(report, nativeStoredAccountId, pairedKeys)
-      : [];
-  return { ...report, accountKeys: [...new Set([...ownKeys, ...folded])] };
+  if (
+    nativeStoredAccountId === undefined ||
+    nativeStoredAccountId !== resolvedAccountId(builtinResolution)
+  ) {
+    return report;
+  }
+  return {
+    ...report,
+    accountKeys: [...new Set([...ownKeys, ...pairedKeys])],
+  };
 }
 
 /**
@@ -354,15 +340,9 @@ async function discoverCodexAccounts(
       fetchQuota: async (options) => {
         const reading = await readNative(options);
         if (!reading) return undefined;
-        const accountKeys = [
-          CODEX_HOME_ACCOUNT_KEY,
-          ...(reading.accountKeys ?? []),
-          ...foldedAccountKeys(
-            reading,
-            nativeStoredAccountId,
-            nativeAccount.includesBuiltinPi ? [PI_CODEX_BUILTIN_ID] : [],
-          ),
-        ];
+        const accountKeys = nativeAccount.includesBuiltinPi
+          ? [CODEX_HOME_ACCOUNT_KEY, PI_CODEX_BUILTIN_ID]
+          : [CODEX_HOME_ACCOUNT_KEY];
         const accountId = laneIdentity(reading, nativeStoredAccountId);
         if (!accountId) return { ...reading, accountKeys };
         for (const lane of piLanes) {
@@ -394,12 +374,7 @@ async function discoverCodexAccounts(
           ...report,
           accountKeys: [
             lane.account.piProviderId,
-            ...(report.accountKeys ?? []),
-            ...foldedAccountKeys(
-              report,
-              lane.storedAccountId,
-              lane.account.extraPiProviderIds ?? [],
-            ),
+            ...(lane.account.extraPiProviderIds ?? []),
             ...(lane.nativeAccountKeys ?? []),
           ],
         };

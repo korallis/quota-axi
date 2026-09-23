@@ -1590,7 +1590,7 @@ describe("Codex Pi sibling account lanes", () => {
     );
   });
 
-  it("drops a folded Pi sibling when the lane's fresh reading names another account", async () => {
+  it("keeps a folded Pi sibling as grouped when the lane's fresh reading names another account", async () => {
     await expectPublishedMembership(
       { token: "native-access-token", accountId: "acct-z" },
       {
@@ -1606,12 +1606,15 @@ describe("Codex Pi sibling account lanes", () => {
       },
       [
         { accountKey: "codex-home", accountKeys: ["codex-home"] },
-        { accountKey: "openai-codex", accountKeys: ["openai-codex"] },
+        {
+          accountKey: "openai-codex",
+          accountKeys: ["openai-codex", "openai-codex-work"],
+        },
       ],
     );
   });
 
-  it("drops the folded built-in key when the native reading names another account", async () => {
+  it("keeps the folded built-in key as grouped when the native reading names another account", async () => {
     await expectPublishedMembership(
       {
         token: "native-access-token",
@@ -1631,7 +1634,7 @@ describe("Codex Pi sibling account lanes", () => {
       [
         {
           accountKey: "openai-codex-work",
-          accountKeys: ["openai-codex-work", "codex-home"],
+          accountKeys: ["openai-codex-work", "codex-home", "openai-codex"],
         },
       ],
     );
@@ -1690,7 +1693,7 @@ describe("Codex Pi sibling account lanes", () => {
     );
   });
 
-  it("drops the built-in key from the single-account row when the native reading names another account", async () => {
+  it("keeps the built-in key as grouped on the single-account row when the native reading names another account", async () => {
     await expectPublishedMembership(
       {
         token: "native-access-token",
@@ -1703,7 +1706,7 @@ describe("Codex Pi sibling account lanes", () => {
           accountId: "acct-a",
         },
       },
-      [{ accountKeys: ["codex-home"] }],
+      [{ accountKeys: ["codex-home", "openai-codex"] }],
     );
   });
 
