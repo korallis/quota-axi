@@ -1040,14 +1040,13 @@ describe("used display preference", () => {
       expect(displayColumns(line)).toBeLessThanOrEqual(100);
   });
 
-  it("reads the preference from the environment and rejects anything else", () => {
+  it("flips only on the exact value used", () => {
     expect(resolveTuiShow({})).toBe("remaining");
-    expect(resolveTuiShow({ [TUI_SHOW_ENV]: "  " })).toBe("remaining");
-    expect(resolveTuiShow({ [TUI_SHOW_ENV]: "remaining" })).toBe("remaining");
-    expect(resolveTuiShow({ [TUI_SHOW_ENV]: " Used " })).toBe("used");
-    expect(() => resolveTuiShow({ [TUI_SHOW_ENV]: "left" })).toThrow(
-      "QUOTA_AXI_TUI_SHOW must be remaining or used",
-    );
+    expect(resolveTuiShow({ [TUI_SHOW_ENV]: "used" })).toBe("used");
+    for (const value of ["", "remaining", " used ", "Used", "USED", "left"])
+      expect(resolveTuiShow({ [TUI_SHOW_ENV]: value }), value).toBe(
+        "remaining",
+      );
   });
 });
 

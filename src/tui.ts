@@ -1,4 +1,3 @@
-import { AxiError } from "axi-sdk-js";
 import {
   providerPresence,
   type ProviderPresence,
@@ -156,21 +155,14 @@ export function detectTuiColorDepth(
 }
 
 /**
- * Resolve the report's {@link TuiShow} preference from the environment. Unset
- * or blank keeps the canonical remaining view; anything other than
- * `remaining` or `used` (case-insensitive) is rejected rather than guessed.
+ * Resolve the report's {@link TuiShow} preference from the environment. Only
+ * the exact value `used` flips the view; anything else keeps the canonical
+ * remaining view.
  */
 export function resolveTuiShow(
   env: Record<string, string | undefined>,
 ): TuiShow {
-  const value = env[TUI_SHOW_ENV]?.trim().toLowerCase() ?? "";
-  if (value === "") return "remaining";
-  if (value === "remaining" || value === "used") return value;
-  throw new AxiError(
-    `${TUI_SHOW_ENV} must be remaining or used`,
-    "VALIDATION_ERROR",
-    [`Unset ${TUI_SHOW_ENV} or run \`${TUI_SHOW_ENV}=used quota-axi --tui\``],
-  );
+  return env[TUI_SHOW_ENV] === "used" ? "used" : "remaining";
 }
 
 export function renderQuotaTui(
