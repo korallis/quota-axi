@@ -215,15 +215,46 @@ describe("Devin credential matrix", () => {
     ).toBe(0);
   });
 
-  it("omits a window whose percent and reset are both missing", () => {
+  it("names a missing daily cap as untrusted instead of letting weekly alone bind", () => {
     const payload = structuredClone(PRO) as {
       userStatus: { planStatus: Record<string, unknown> };
     };
     delete payload.userStatus.planStatus.dailyQuotaRemainingPercent;
     delete payload.userStatus.planStatus.dailyQuotaResetAtUnix;
+    const normalized = normalizeDevinPayload(payload, NOW);
+    expect(normalized.windows.map((w) => w.id)).toEqual(["weekly"]);
+    expect(normalized.untrustedWindowIds).toEqual(["daily"]);
+    expect(interpretNormalized(normalized).quotaSemantics).toMatchObject({
+      status: "partial",
+      unresolvedWindowIds: ["daily"],
+    });
     expect(
-      normalizeDevinPayload(payload, NOW).windows.map((w) => w.id),
-    ).toEqual(["weekly"]);
+      interpretNormalized(normalized).quotaSemantics?.effectiveAvailability[0]
+        ?.effectivePercentRemaining,
+    ).toBeUndefined();
+  });
+
+  it("names a daily cap from a finished cycle as untrusted", () => {
+    const payload = structuredClone(PRO) as {
+      userStatus: { planStatus: Record<string, unknown> };
+    };
+    payload.userStatus.planStatus.dailyQuotaResetAtUnix = String(
+      Date.parse("2026-09-22T08:00:00.000Z") / 1000,
+    );
+    const normalized = normalizeDevinPayload(payload, NOW);
+    expect(normalized.windows.map((w) => w.id)).toEqual(["weekly"]);
+    expect(normalized.untrustedWindowIds).toEqual(["daily"]);
+    expect(interpretNormalized(normalized).quotaSemantics?.status).toBe(
+      "partial",
+    );
+  });
+
+  it("rejects a hideDailyQuota that is not a boolean", () => {
+    const payload = structuredClone(MAX) as {
+      planInfo: Record<string, unknown>;
+    };
+    payload.planInfo.hideDailyQuota = "true";
+    expect(() => normalizeDevinPayload(payload, NOW)).toThrow("schema_invalid");
   });
 
   it("names an out-of-range percent as untrusted and keeps semantics partial", () => {
@@ -446,6 +477,38 @@ describe("Devin credential matrix", () => {
     expect(report.state.sourcesTried).toEqual([DEVIN_ENV_SOURCE, "cache"]);
   });
 
+  it("reports a 401 as a rejection without waiting on its stalled body", async () => {
+    const stalled = new ReadableStream<Uint8Array>({
+      pull: () => new Promise(() => {}),
+    });
+    const report = await testAdapter({
+      fetch: sequentialFetch([new Response(stalled, { status: 401 })]),
+      deadlineMs: 50,
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state).toMatchObject({
+      status: "auth_required",
+      error: "provider_auth_rejected",
+      authStatus: "unusable",
+    });
+  });
+
+  it("times out a stalled body even when its cancellation never settles", async () => {
+    const stalled = new ReadableStream<Uint8Array>({
+      pull: () => new Promise(() => {}),
+      cancel: () => new Promise(() => {}),
+    });
+    const report = await testAdapter({
+      fetch: sequentialFetch([new Response(stalled, { status: 200 })]),
+      deadlineMs: 20,
+    }).fetchQuota(OPTIONS);
+
+    expect(report.state).toMatchObject({
+      status: "error",
+      error: "request_timeout",
+    });
+  });
+
   it("preserves the cache on HTTP 400", async () => {
     const deleted: string[] = [];
     const contextId = devinCacheContextId(
@@ -617,6 +680,7 @@ function testAdapter(
     sources: readonly DevinCredentialSource[];
     readCachedProvider: (contextId: string) => ProviderQuota | undefined;
     deleteCachedProvider: (provider: "devin") => void;
+    deadlineMs: number;
   }> = {},
 ) {
   return createDevinAdapter({
@@ -633,7 +697,25 @@ function testAdapter(
     ...(overrides.deleteCachedProvider
       ? { deleteCachedProvider: overrides.deleteCachedProvider }
       : {}),
+    ...(overrides.deadlineMs ? { deadlineMs: overrides.deadlineMs } : {}),
   });
+}
+
+function interpretNormalized(
+  normalized: ReturnType<typeof normalizeDevinPayload>,
+): ProviderQuota {
+  return withQuotaSemantics(
+    {
+      provider: "devin",
+      windows: normalized.windows,
+      state: {
+        status: "fresh",
+        stale: false,
+        untrustedWindowIds: normalized.untrustedWindowIds,
+      },
+    },
+    new Date(NOW).toISOString(),
+  );
 }
 
 function fileSource(resolution: DevinLocalResolution): DevinCredentialSource {

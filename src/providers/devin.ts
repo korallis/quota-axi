@@ -655,9 +655,7 @@ async function requestUserStatus(
 
   const lifetime = createResponseBodyLifetime(response);
   try {
-    if (response.status !== 401 && response.status !== 403) {
-      rejectHttpFailure(response, dependencies.now());
-    }
+    rejectHttpFailure(response, dependencies.now());
     let bytes: Uint8Array;
     try {
       bytes = await readBoundedBody(response, signal, lifetime);
@@ -674,20 +672,17 @@ async function requestUserStatus(
     try {
       text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     } catch {
-      rejectHttpFailure(response, dependencies.now());
       throw new DevinFailure("response_invalid_utf8", { staleEligible: true });
     }
     let payload: unknown;
     try {
       payload = text.length === 0 ? undefined : (JSON.parse(text) as unknown);
     } catch {
-      rejectHttpFailure(response, dependencies.now());
       throw new DevinFailure("malformed_json", { staleEligible: true });
     }
-    rejectHttpFailure(response, dependencies.now());
     return payload;
   } finally {
-    await lifetime.cancel();
+    void lifetime.cancel();
   }
 }
 
@@ -740,6 +735,8 @@ function rejectHttpFailure(response: Response, receivedAt: number): void {
  * published window-kind enum stays unchanged; `windowSeconds` carries the
  * vendor's 86,400s day. `planInfo.hideDailyQuota` omits that window, because
  * Max has no daily cap and a figure the vendor hides must not bound anything.
+ * Otherwise the daily cap binds, so a weekly reading whose daily figure is
+ * missing or belongs to a finished cycle names `daily` as untrusted.
  *
  * Remaining percents are the vendor's own `*_quota_remaining_percent`. Proto3
  * JSON omits zero-valued scalars, so a missing percent whose reset is present
@@ -767,6 +764,14 @@ export function normalizeDevinPayload(
     Object.hasOwn(planInfo, "billingStrategy") &&
     planInfo.billingStrategy !== undefined &&
     typeof planInfo.billingStrategy !== "string"
+  ) {
+    throw new DevinFailure("schema_invalid", { staleEligible: true });
+  }
+  if (
+    planInfo &&
+    Object.hasOwn(planInfo, "hideDailyQuota") &&
+    planInfo.hideDailyQuota !== undefined &&
+    typeof planInfo.hideDailyQuota !== "boolean"
   ) {
     throw new DevinFailure("schema_invalid", { staleEligible: true });
   }
@@ -818,7 +823,9 @@ export function normalizeDevinPayload(
         "dailyQuotaResetAtUnix",
         now,
       );
-      if (daily.untrusted) untrustedWindowIds.push("daily");
+      if (daily.untrusted || (!daily.window && weekly.window)) {
+        untrustedWindowIds.push("daily");
+      }
       if (daily.window) windows.push(daily.window);
     }
   }
@@ -1190,16 +1197,15 @@ async function readBodyChunk(
 ): Promise<ReadableStreamReadResult<Uint8Array>> {
   const cancelReader = () => lifetime.cancel(() => reader.cancel());
   if (signal.aborted) {
-    await cancelReader();
+    void cancelReader();
     throw new DevinFailure("request_timeout", { staleEligible: true });
   }
   return new Promise((resolve, reject) => {
     let aborted = false;
     const abort = () => {
       aborted = true;
-      cancelReader().then(() => {
-        reject(new DevinFailure("request_timeout", { staleEligible: true }));
-      });
+      void cancelReader();
+      reject(new DevinFailure("request_timeout", { staleEligible: true }));
     };
     signal.addEventListener("abort", abort, { once: true });
     reader.read().then(
@@ -1224,13 +1230,16 @@ function createResponseBodyLifetime(response: Response): ResponseBodyLifetime {
     markConsumed() {
       if (!cancellation) consumed = true;
     },
-    async cancel(action = () => response.body?.cancel()) {
-      if (consumed) return;
-      cancellation ??= Promise.resolve()
-        .then(action)
-        .then(() => undefined)
-        .catch(() => undefined);
-      await cancellation;
+    cancel(action = () => response.body?.cancel()) {
+      if (consumed) return Promise.resolve();
+      cancellation ??= (async () => {
+        try {
+          await action();
+        } catch {
+          // Cancellation only releases the connection; the read already failed.
+        }
+      })();
+      return cancellation;
     },
   };
 }
