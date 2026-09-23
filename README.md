@@ -417,7 +417,7 @@ A row covering one credential lists just its own key. A consumer that holds a cr
 A provider without account discovery lists `accountKeys: ["default"]`, the same literal as its schema 6 `accountKey` filler. A discovering provider that stays on one row, such as two Pi keys for one account with no native login, keeps schema 5 and no `accountKey`, and its `accountKeys` starts with that lane's key.
 Membership mirrors quota-axi's own grouping exactly: every key the provider grouped into the row, and no other. That grouping relies on stored account identity when no fresh live reading confirms it, so a fold is published as applied even when a later live reading names a different account.
 `accountKeys` is a quota JSON field. Auth still lists each discovered lane on its own, because a fold that depends on the quota reading has not happened there. TOON does not add a column: its flat blocks already name the published lane by `accountKey`, and the membership list is the JSON account row's join field.
-`src/providers/accounts.ts` publishes the list for every expanded lane. A lane covers only its own key unless the adapter sets `ProviderAccount.accountKeys` to the keys it folded in, including a key it learns during the read. Codex is the only adapter that discovers accounts today. Claude, Kimi, Cursor, and the other adapters do not fold lanes, and a later discoverer uses the same field. The list is not cached.
+The shared account collector puts each discovered lane's key first; an adapter adds folded keys to its quota reading's `ProviderQuota.accountKeys`, including keys learned during the read. Codex is the only adapter that discovers accounts today; other providers report `default`. The list itself is not cached; Codex reconstructs a stale row's originating key from the cached credential source.
 Every flat TOON block adds `accountKey` immediately after `provider`, and the quota/exhaustion/attention join becomes **`provider` + `accountKey` + `scope`**.
 Models and model sort ties use **`provider` + `accountKey` + `id`**.
 Models `unmatchedWindowIds` entries gain the same key, so an unmapped window reads `provider/accountKey/scope` instead of `provider/scope`; the key keeps two accounts of one provider from reporting the same unmapped window indistinguishably.
@@ -448,7 +448,7 @@ The `quota` command's `--json` emits `schemaVersion: 5`, or `6` when a provider 
 
 The package publishes TypeScript declarations from its package root, so consumers can use `import type { QuotaAxiResponse, ModelsResponse } from "quota-axi"`. The adapter contract is `ProviderAdapter` in and normalized `ProviderQuota` out: adapters report observed quota data, never rank, mint credentials, or retain raw responses. The narrowly bounded vendor-owned renewal path is documented under [Delegated credential refresh](#delegated-credential-refresh).
 
-`schemaVersion` is command-specific. Additive optional fields do not bump it. A semantic or incompatible shape change does. The legacy single-account `quota` report is version 5, `auth` is version 1, and `models` is version 1. When account discovery expands a provider, those versions are 6, 2, and 2 respectively. `accountKeys` on a schema 6 quota row is one of those additive fields.
+`schemaVersion` is command-specific. Additive fields do not bump it. A semantic or incompatible shape change does. The legacy single-account `quota` report is version 5, `auth` is version 1, and `models` is version 1. When account discovery expands a provider, those versions are 6, 2, and 2 respectively. For quota row membership, see [Account keys and compatibility](#account-keys-and-compatibility).
 
 ### Default report blocks
 
@@ -517,12 +517,12 @@ Everything a consumer branches on stays in the default tier: `accountKey` and `a
 
 ### Quota report shape
 
-| Object                        | Fields                                                                                                                                                                            |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Quota report                  | `providers`                                                                                                                                                                       |
-| Provider report               | `provider`, optional `accountKey`, optional `accountKeys` (every account row), `windows`, `quotaSemantics`, `state`, optional `plan`, optional `credits`, and optional `notSetUp` |
-| Provider report with `--full` | Also `label`, `source`, optional `account` identity, and per-source `attempts`                                                                                                    |
-| Account identity (`--full`)   | Optional `email`, `organization`, `accountId`, and `identityStatus`                                                                                                               |
+| Object                        | Fields                                                                                                                                                                 |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Quota report                  | `providers`                                                                                                                                                            |
+| Provider report               | `provider`, optional `accountKey`, `accountKeys` (every quota row), `windows`, `quotaSemantics`, `state`, optional `plan`, optional `credits`, and optional `notSetUp` |
+| Provider report with `--full` | Also `label`, `source`, optional `account` identity, and per-source `attempts`                                                                                         |
+| Account identity (`--full`)   | Optional `email`, `organization`, `accountId`, and `identityStatus`                                                                                                    |
 
 Account identity and per-source `attempts` are omitted unless `--full` is passed.
 Claude `identityStatus` is `verified` only when Anthropic returns an authoritative account identifier; `email` and `organization` are display-only and must not be used for duplicate detection.
