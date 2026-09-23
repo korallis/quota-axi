@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-09-23T05:26:35.160Z",
+  "schemaVersion": 1,
+  "auth": [
+    {
+      "provider": "devin",
+      "sources": [
+        {
+          "source": "env:WINDSURF_API_KEY",
+          "path": "WINDSURF_API_KEY",
+          "status": "available"
+        },
+        {
+          "source": "file:credentials.toml",
+          "path": "/Users/kunchen/.no-mistakes/worktrees/1c5c6552f798/01M36AS8MKNNTMB9QDBWR108JH/.local-devin-e2e/data/devin/credentials.toml",
+          "status": "available"
+        }
+      ]
+    }
+  ]
+}

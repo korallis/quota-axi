@@ -1,0 +1,99 @@
+{
+  "generatedAt": "2026-09-23T05:28:49.695Z",
+  "schemaVersion": 5,
+  "providers": [
+    {
+      "provider": "devin",
+      "label": "Devin",
+      "source": "api",
+      "plan": "max",
+      "account": {
+        "email": "person@example.invalid",
+        "accountId": "fixture-user"
+      },
+      "windows": [
+        {
+          "id": "weekly",
+          "label": "week",
+          "kind": "weekly",
+          "percentRemaining": 40,
+          "percentUsed": 60,
+          "windowSeconds": 604800,
+          "startsAt": "2026-09-20T08:00:00.000Z",
+          "resetsAt": "2026-09-27T08:00:00.000Z",
+          "pace": {
+            "status": "ahead",
+            "timeRemainingPercent": 58.6426,
+            "elapsedPercent": 41.3574,
+            "reservePercentPoints": -18.6426,
+            "cycleBasis": "starts_at_resets_at",
+            "cycleSeconds": 604800,
+            "burnMultiple": 1.4508,
+            "projectedExhaustedAt": "2026-09-25T03:48:02.825Z",
+            "projectionConfidence": "established"
+          }
+        }
+      ],
+      "credits": {
+        "remaining": 0,
+        "unit": "usd"
+      },
+      "state": {
+        "status": "fresh",
+        "stale": false,
+        "authStatus": "usable",
+        "refreshedAt": "2026-09-23T05:28:49.695Z",
+        "untrustedWindowIds": [
+          "daily"
+        ],
+        "sourcesTried": [
+          "env:WINDSURF_API_KEY"
+        ]
+      },
+      "attempts": [
+        {
+          "source": "env:WINDSURF_API_KEY",
+          "status": "success"
+        }
+      ],
+      "quotaSemantics": {
+        "status": "partial",
+        "description": "Devin's daily and weekly windows bound included quota. Free models do not draw on them, and paid extra usage continues past a zeroed window, so they are not an all-model bound. Organization and administrator limits are not reported in these fields.",
+        "effectiveAvailability": [
+          {
+            "scope": "included_quota",
+            "status": "unknown",
+            "boundedBy": [
+              "weekly"
+            ],
+            "pace": {
+              "status": "ahead",
+              "aheadWindowIds": [
+                "weekly"
+              ],
+              "worstReservePercentPoints": -18.6426,
+              "worstReserveWindowId": "weekly"
+            },
+            "runway": {
+              "status": "unknown",
+              "unmeasurableWindowIds": [
+                "weekly",
+                "daily"
+              ]
+            },
+            "selection": {
+              "status": "unknown",
+              "unmeasurableWindowIds": [
+                "weekly",
+                "daily"
+              ]
+            }
+          }
+        ],
+        "unresolvedWindowIds": [
+          "daily"
+        ]
+      }
+    }
+  ]
+}

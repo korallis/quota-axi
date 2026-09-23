@@ -1,0 +1,42 @@
+{
+  "generatedAt": "2026-09-23T05:26:34.874Z",
+  "schemaVersion": 5,
+  "providers": [
+    {
+      "provider": "devin",
+      "label": "Devin",
+      "source": "unavailable",
+      "windows": [],
+      "state": {
+        "status": "auth_required",
+        "stale": false,
+        "error": "provider_auth_rejected",
+        "authStatus": "unusable",
+        "remedyCommand": "devin auth login",
+        "sourcesTried": [
+          "env:WINDSURF_API_KEY",
+          "file:credentials.toml"
+        ]
+      },
+      "attempts": [
+        {
+          "source": "env:WINDSURF_API_KEY",
+          "status": "failed",
+          "error": "provider_auth_rejected",
+          "credentialPresent": true
+        },
+        {
+          "source": "file:credentials.toml",
+          "status": "failed",
+          "error": "provider_auth_rejected",
+          "credentialPresent": true
+        }
+      ],
+      "quotaSemantics": {
+        "status": "unknown",
+        "description": "No quota windows are available, so no effective remaining percentage can be computed.",
+        "effectiveAvailability": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+bin: /Users/kunchen/.no-mistakes/worktrees/1c5c6552f798/01M36AS8MKNNTMB9QDBWR108JH/dist/bin/quota-axi.js
+description: Report local agent-provider quota windows for routing-aware agents
+generatedAt: "2026-09-23T05:26:35.070Z"
+quota[1]{provider,scope,effectivePercentRemaining,spendPriority,runway,confidence,limitedBy,resetsAt}:
+  devin,included_quota,40,-0.7697,projected_exhaustion,established,weekly,"2026-09-27T08:00:00.000Z"
+exhaustion[1]{provider,scope,usableRunwaySeconds,projectedExhaustedAt,limitingWindowId}:
+  devin,included_quota,166663,"2026-09-25T03:44:18.450Z",weekly
+attention[0]:
+help[1]:
+  Run `quota-axi --full` for windows, pace, reserve, and account evidence

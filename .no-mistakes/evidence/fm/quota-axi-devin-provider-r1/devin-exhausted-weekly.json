@@ -1,0 +1,109 @@
+{
+  "generatedAt": "2026-09-23T05:27:25.192Z",
+  "schemaVersion": 5,
+  "providers": [
+    {
+      "provider": "devin",
+      "label": "Devin",
+      "source": "api",
+      "windows": [
+        {
+          "id": "weekly",
+          "label": "week",
+          "kind": "weekly",
+          "percentRemaining": 0,
+          "percentUsed": 100,
+          "windowSeconds": 604800,
+          "startsAt": "2026-09-20T08:00:00.000Z",
+          "resetsAt": "2026-09-27T08:00:00.000Z",
+          "pace": {
+            "status": "ahead",
+            "timeRemainingPercent": 58.6565,
+            "elapsedPercent": 41.3435,
+            "reservePercentPoints": -58.6565,
+            "cycleBasis": "starts_at_resets_at",
+            "cycleSeconds": 604800,
+            "burnMultiple": 2.4188,
+            "projectedExhaustedAt": "2026-09-23T05:27:25.192Z",
+            "projectionConfidence": "established"
+          }
+        },
+        {
+          "id": "daily",
+          "label": "day",
+          "kind": "session",
+          "percentRemaining": 25,
+          "percentUsed": 75,
+          "windowSeconds": 86400,
+          "startsAt": "2026-09-22T08:00:00.000Z",
+          "resetsAt": "2026-09-23T08:00:00.000Z",
+          "pace": {
+            "status": "behind",
+            "timeRemainingPercent": 10.5958,
+            "elapsedPercent": 89.4042,
+            "reservePercentPoints": 14.4042,
+            "cycleBasis": "starts_at_resets_at",
+            "cycleSeconds": 86400,
+            "burnMultiple": 0.8389,
+            "projectedExhaustedAt": "2026-09-23T12:36:33.589Z",
+            "projectionConfidence": "established"
+          }
+        }
+      ],
+      "state": {
+        "status": "fresh",
+        "stale": false,
+        "authStatus": "usable",
+        "refreshedAt": "2026-09-23T05:27:25.192Z",
+        "sourcesTried": [
+          "env:WINDSURF_API_KEY"
+        ]
+      },
+      "attempts": [
+        {
+          "source": "env:WINDSURF_API_KEY",
+          "status": "success"
+        }
+      ],
+      "quotaSemantics": {
+        "status": "known",
+        "description": "Devin's daily and weekly windows bound included quota. Free models do not draw on them, and paid extra usage continues past a zeroed window, so they are not an all-model bound. Organization and administrator limits are not reported in these fields.",
+        "effectiveAvailability": [
+          {
+            "scope": "included_quota",
+            "status": "known",
+            "effectivePercentRemaining": 0,
+            "boundedBy": [
+              "weekly",
+              "daily"
+            ],
+            "limitingWindowIds": [
+              "weekly"
+            ],
+            "pace": {
+              "status": "mixed",
+              "aheadWindowIds": [
+                "weekly"
+              ],
+              "behindWindowIds": [
+                "daily"
+              ],
+              "worstReservePercentPoints": -58.6565,
+              "worstReserveWindowId": "weekly"
+            },
+            "runway": {
+              "status": "exhausted_now",
+              "usableRunwaySeconds": 0,
+              "limitingWindowId": "weekly",
+              "projectedExhaustedAt": "2026-09-23T05:27:25.192Z"
+            },
+            "selection": {
+              "status": "known",
+              "spendPriority": -1.9264
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

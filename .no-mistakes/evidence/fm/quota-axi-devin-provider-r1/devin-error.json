@@ -1,0 +1,87 @@
+{
+  "generatedAt": "2026-09-23T05:26:34.793Z",
+  "schemaVersion": 5,
+  "providers": [
+    {
+      "provider": "devin",
+      "label": "Devin",
+      "source": "cache",
+      "windows": [
+        {
+          "id": "weekly",
+          "label": "week",
+          "kind": "weekly",
+          "percentUsed": 40,
+          "percentRemaining": 60,
+          "startsAt": "2026-09-20T08:00:00.000Z",
+          "resetsAt": "2026-09-27T08:00:00.000Z",
+          "windowSeconds": 604800,
+          "pace": {
+            "status": "unknown",
+            "reason": "stale"
+          }
+        }
+      ],
+      "state": {
+        "status": "stale",
+        "stale": true,
+        "sourcesTried": [
+          "env:WINDSURF_API_KEY",
+          "cache"
+        ],
+        "refreshedAt": "2026-09-23T05:26:34.597Z",
+        "untrustedWindowIds": [
+          "daily"
+        ],
+        "error": "provider_unavailable",
+        "authStatus": "usable"
+      },
+      "plan": "pro",
+      "credits": {
+        "remaining": 2.5,
+        "unit": "usd"
+      },
+      "attempts": [
+        {
+          "source": "env:WINDSURF_API_KEY",
+          "status": "failed",
+          "error": "provider_unavailable"
+        }
+      ],
+      "quotaSemantics": {
+        "status": "partial",
+        "description": "The raw quota windows are stale diagnostic data, so effective remaining is unknown until the provider refreshes successfully.",
+        "effectiveAvailability": [
+          {
+            "scope": "included_quota",
+            "status": "unknown",
+            "boundedBy": [
+              "weekly"
+            ],
+            "runway": {
+              "status": "unknown",
+              "unmeasurableWindowIds": [
+                "weekly"
+              ]
+            },
+            "selection": {
+              "status": "unknown",
+              "unmeasurableWindowIds": [
+                "weekly"
+              ]
+            },
+            "pace": {
+              "status": "unknown",
+              "unknownWindowIds": [
+                "weekly"
+              ]
+            }
+          }
+        ],
+        "unresolvedWindowIds": [
+          "daily"
+        ]
+      }
+    }
+  ]
+}

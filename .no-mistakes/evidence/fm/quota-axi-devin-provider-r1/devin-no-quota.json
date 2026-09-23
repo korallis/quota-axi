@@ -1,0 +1,36 @@
+{
+  "generatedAt": "2026-09-23T05:27:25.038Z",
+  "schemaVersion": 5,
+  "providers": [
+    {
+      "provider": "devin",
+      "label": "Devin",
+      "source": "api",
+      "account": {
+        "email": "person@example.invalid",
+        "accountId": "fixture-user"
+      },
+      "windows": [],
+      "state": {
+        "status": "fresh",
+        "stale": false,
+        "authStatus": "usable",
+        "refreshedAt": "2026-09-23T05:27:25.038Z",
+        "sourcesTried": [
+          "env:WINDSURF_API_KEY"
+        ]
+      },
+      "attempts": [
+        {
+          "source": "env:WINDSURF_API_KEY",
+          "status": "success"
+        }
+      ],
+      "quotaSemantics": {
+        "status": "unknown",
+        "description": "No quota windows are available, so no effective remaining percentage can be computed.",
+        "effectiveAvailability": []
+      }
+    }
+  ]
+}

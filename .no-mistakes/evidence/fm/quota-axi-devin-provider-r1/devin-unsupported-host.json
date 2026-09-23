@@ -1,0 +1,33 @@
+{
+  "generatedAt": "2026-09-23T05:26:58.509Z",
+  "schemaVersion": 5,
+  "providers": [
+    {
+      "provider": "devin",
+      "label": "Devin",
+      "source": "unavailable",
+      "windows": [],
+      "state": {
+        "status": "error",
+        "stale": false,
+        "error": "unsupported_server",
+        "sourcesTried": [
+          "env:WINDSURF_API_KEY"
+        ]
+      },
+      "attempts": [
+        {
+          "source": "env:WINDSURF_API_KEY",
+          "status": "skipped",
+          "error": "unsupported_server",
+          "credentialPresent": true
+        }
+      ],
+      "quotaSemantics": {
+        "status": "unknown",
+        "description": "No quota windows are available, so no effective remaining percentage can be computed.",
+        "effectiveAvailability": []
+      }
+    }
+  ]
+}
