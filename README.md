@@ -76,6 +76,7 @@ $ quota-axi --provider claude --json
   "providers": [
     {
       "provider": "claude",
+      "accountKeys": ["default"],
       "plan": "pro",
       "windows": [
         {
@@ -390,7 +391,7 @@ Discovery order is the built-in `openai-codex` entry, then other `openai-codex-*
 Two keys that carry the same stored `accountId` are the same ChatGPT account and are not reported as extra capacity.
 The later key stays a credential fallback until a probe succeeds or every candidate is rejected.
 The lane keeps the first key as its `accountKey`, while `source` names the key that answered.
-The row's `accountKeys` lists every credential key folded into that lane, including the published `accountKey`.
+See [Account keys and compatibility](#account-keys-and-compatibility) for how consumers join folded keys to a row.
 A key whose identity cannot be compared is left as its own lane so the uncertainty stays visible.
 
 When only the built-in Pi entry (or none) is present, Codex keeps its existing single-winner path: native `$CODEX_HOME/auth.json`, then `openai-codex`, then the CLI fallback.
@@ -429,7 +430,7 @@ A key the report cannot publish (malformed or repeated) costs only its own lane:
 The provider falls back to its single selected account only when no usable lane remains.
 `--full` adds the vendor identity the usage endpoint supplied, when any.
 
-If no provider expands, output stays byte-compatible in shape and field order: quota schema 5, auth/models schema 1, and no account column.
+If no provider expands, existing fields retain their shape and order, while quota JSON adds `accountKeys`: quota schema 5, auth/models schema 1, and no account column.
 A sole discovered Pi sibling uses that legacy representation.
 Expansion follows the lanes discovered rather than the rows published, so when a native login and a Pi sibling turn out to be one account the single surviving row still carries its key and the report stays schema 6.
 Consumers must honor the schema version; a legacy keyless row means the single selected lane, and keys must never be inferred from row position.
@@ -516,12 +517,12 @@ Everything a consumer branches on stays in the default tier: `accountKey` and `a
 
 ### Quota report shape
 
-| Object                        | Fields                                                                                                                                                                                   |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Quota report                  | `providers`                                                                                                                                                                              |
-| Provider report               | `provider`, optional `accountKey`, optional `accountKeys` (every account row), `windows`, `quotaSemantics`, `state`, optional `plan`, optional `credits`, and optional `notSetUp`           |
-| Provider report with `--full` | Also `label`, `source`, optional `account` identity, and per-source `attempts`                                                                                                           |
-| Account identity (`--full`)   | Optional `email`, `organization`, `accountId`, and `identityStatus`                                                                                                                      |
+| Object                        | Fields                                                                                                                                                                            |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Quota report                  | `providers`                                                                                                                                                                       |
+| Provider report               | `provider`, optional `accountKey`, optional `accountKeys` (every account row), `windows`, `quotaSemantics`, `state`, optional `plan`, optional `credits`, and optional `notSetUp` |
+| Provider report with `--full` | Also `label`, `source`, optional `account` identity, and per-source `attempts`                                                                                                    |
+| Account identity (`--full`)   | Optional `email`, `organization`, `accountId`, and `identityStatus`                                                                                                               |
 
 Account identity and per-source `attempts` are omitted unless `--full` is passed.
 Claude `identityStatus` is `verified` only when Anthropic returns an authoritative account identifier; `email` and `organization` are display-only and must not be used for duplicate detection.
