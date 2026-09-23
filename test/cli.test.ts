@@ -2117,6 +2117,37 @@ describe("default TOON decision blocks", () => {
     expect(repeated).not.toContain("omitted");
   });
 
+  it("ignores empty provider occurrences without widening a named scope", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T12:00:00.000Z"));
+    stubEveryProvider((id) => notSetUpQuota(id));
+    const codex = await capture(["--provider=codex"]);
+    expect(await capture(["--provider=", "--provider=codex"])).toBe(codex);
+    expect(await capture(["--provider=codex", "--provider="])).toBe(codex);
+    expect(await capture(["--provider=,codex"])).toBe(codex);
+    expect(
+      parseModelsFlags(["--provider=", "--provider=codex"]).providers,
+    ).toEqual(["codex"]);
+  });
+
+  it("retains all providers when every provider occurrence is empty", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T12:00:00.000Z"));
+    stubEveryProvider((id) => notSetUpQuota(id));
+    expect(parseFlags(["--provider="]).providers).toEqual(
+      parseFlags([]).providers,
+    );
+    expect(parseFlags(["--provider=", "--provider="]).providers).toEqual(
+      parseFlags([]).providers,
+    );
+    expect(parseModelsFlags(["--provider="]).providers).toEqual(
+      parseModelsFlags([]).providers,
+    );
+    expect(await capture(["--provider=", "--full"])).toBe(
+      await capture(["--full"]),
+    );
+  });
+
   it("never adds a false unresolved_windows row for a never-set-up OpenCode Go", async () => {
     useTempCache();
     PROVIDERS["opencode-go"] = providerWithQuota(signedOutOpenCodeGoQuota());

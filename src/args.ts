@@ -316,13 +316,18 @@ function parseProviderScope(
     const seen = new Set<ProviderId>();
     const providers: ProviderId[] = [];
     for (const value of values) {
+      if (!value.trim()) continue;
       for (const provider of parseProviders(value)) {
         if (seen.has(provider)) continue;
         seen.add(provider);
         providers.push(provider);
       }
     }
-    return providers;
+    return providers.length > 0
+      ? providers
+      : defaultProviders
+        ? [...defaultProviders]
+        : parseProviders(undefined);
   } catch (error) {
     throw new AxiError(
       error instanceof Error ? error.message : "unsupported provider",
