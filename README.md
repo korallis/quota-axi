@@ -323,7 +323,7 @@ It is generated from `src/skill.ts`; update it with `pnpm run build:skill` and v
 
 | Flag                                                                                                                                         | Description                                                               |
 | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `--provider claude,codex,cursor,copilot,grok,kimi,zai,agy,alibaba,opencode-go,commandcode,minimax,mimo,deepseek,openrouter,elevenlabs,devin` | Scope providers                                                           |
+| `--provider claude,codex,cursor,copilot,grok,kimi,zai,agy,alibaba,opencode-go,commandcode,minimax,mimo,deepseek,openrouter,elevenlabs,devin` | Scope providers; repeat to union in first-seen order (`--provider zai --provider codex` equals `--provider zai,codex`) |
 | `--json`                                                                                                                                     | Emit normalized JSON instead of TOON for quota, auth, or models           |
 | `--full`                                                                                                                                     | Include audit and derivation details                                      |
 | `--tui`                                                                                                                                      | Render the live human terminal report instead of TOON (quota only)        |
@@ -473,8 +473,16 @@ A `quota[]` row whose `runway` is `projected_exhaustion` or `exhausted_now` has 
 
 Two invariants hold for every report:
 
-- **Every requested provider appears at least once**, in `quota[]` or `attention[]` or both. A provider is never silently absent, and a provider with no `quota[]` row always states its `state.authStatus` - including a positive `usable` - as `(auth <status>)` in its `attention[]` detail.
+- **Every requested provider appears at least once**, in `quota[]` or `attention[]`, except providers with positive evidence of absence, which default TOON omits and counts in a help line; `--full` and `--provider` name them. A provider that remains in the report with no `quota[]` row always states its `state.authStatus` - including a positive `usable` - as `(auth <status>)` in its `attention[]` detail. In an account-expanded report a provider is omitted only when every one of its lanes is absent.
 - **`quota[]` rows stay in provider-declaration order**, never sorted by any metric. A compact table with a `spendPriority` column must never read as a published ranking.
+
+The omission help line sits after any situational advice and before the tier hint:
+
+```text
+10 providers not set up are omitted; run `quota-axi --full` to list them
+```
+
+One omitted provider uses the singular (`1 provider`, `is`, `it`). A machine with nothing set up still prints `quota[0]`, `exhaustion[0]`, and `attention[0]` plus that line, and still exits 1. `--full` prints the omitted rows and no omission line. Exit codes are otherwise unchanged.
 
 An unknown or stale scope deliberately gets **no** `quota[]` row: the absence of a number is the correct encoding of "no number", and the scope is named in `attention[]` instead.
 
@@ -492,18 +500,20 @@ An unknown or stale scope deliberately gets **no** `quota[]` row: the absence of
 | `effectiveAvailability[].pace.behindWindowIds`, `onPaceWindowIds`                                                                              |
 | Account identity (`account`) and per-source `attempts`                                                                                         |
 
-Everything a consumer branches on stays in the default tier: `state.status`, `stale`, `authStatus`, `error`, `reason`, `remedyCommand`, `retryAfter`, `untrustedWindowIds`, and `degradedSources`; window `pace.status`, `reason`, `reservePercentPoints`, `burnMultiple`, and `shareOf` together with that share window's `percentUsed`; `quotaSemantics.status` and `unresolvedWindowIds`; and every scope's `effectivePercentRemaining`, `boundedBy`, `limitingWindowIds`, `boundConflict`, `runway`, `selection`, and pace `aheadWindowIds` / `unknownWindowIds` / `worstReservePercentPoints`. `credits` also stays, so a consumer can avoid misreading it as exhaustion.
+Everything a consumer branches on stays in the default tier: `state.status`, `stale`, `authStatus`, `error`, `reason`, `remedyCommand`, `retryAfter`, `untrustedWindowIds`, and `degradedSources`; window `pace.status`, `reason`, `reservePercentPoints`, `burnMultiple`, and `shareOf` together with that share window's `percentUsed`; `quotaSemantics.status` and `unresolvedWindowIds`; every scope's `effectivePercentRemaining`, `boundedBy`, `limitingWindowIds`, `boundConflict`, `runway`, `selection`, and pace `aheadWindowIds` / `unknownWindowIds` / `worstReservePercentPoints`; and sparse `notSetUp`. `credits` also stays, so a consumer can avoid misreading it as exhaustion.
+
+`notSetUp: true` is present only on a provider lane that has positive evidence of absence (the same `providerPresence` classification the human report uses). Every provider stays in `providers[]` on both default `--json` and `--full`; omitting entries would change downstream consumers that look a provider up by id. The field is additive, so `schemaVersion` stays 5, or 6 when a provider expands to multiple accounts. Default TOON is the only output that omits these providers.
 
 `--tui` renders from the complete in-memory model, so demotion never changes what the human report draws.
 
 ### Quota report shape
 
-| Object                        | Fields                                                                                                           |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Quota report                  | `providers`                                                                                                      |
-| Provider report               | `provider`, optional `accountKey`, `windows`, `quotaSemantics`, `state`, optional `plan`, and optional `credits` |
-| Provider report with `--full` | Also `label`, `source`, optional `account` identity, and per-source `attempts`                                   |
-| Account identity (`--full`)   | Optional `email`, `organization`, `accountId`, and `identityStatus`                                              |
+| Object                        | Fields                                                                                                                                |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Quota report                  | `providers`                                                                                                                           |
+| Provider report               | `provider`, optional `accountKey`, `windows`, `quotaSemantics`, `state`, optional `plan`, optional `credits`, and optional `notSetUp` |
+| Provider report with `--full` | Also `label`, `source`, optional `account` identity, and per-source `attempts`                                                        |
+| Account identity (`--full`)   | Optional `email`, `organization`, `accountId`, and `identityStatus`                                                                   |
 
 Account identity and per-source `attempts` are omitted unless `--full` is passed.
 Claude `identityStatus` is `verified` only when Anthropic returns an authoritative account identifier; `email` and `organization` are display-only and must not be used for duplicate detection.

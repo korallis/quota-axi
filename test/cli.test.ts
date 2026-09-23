@@ -120,6 +120,36 @@ describe("CLI flag parsing", () => {
     expect(parseFlags(["--provider", "agy"]).providers).toEqual(["agy"]);
   });
 
+  it("accumulates repeated --provider flags in first-seen order", () => {
+    expect(
+      parseFlags(["--provider", "zai", "--provider", "codex"]).providers,
+    ).toEqual(["zai", "codex"]);
+    expect(parseFlags(["--provider", "zai,codex"]).providers).toEqual([
+      "zai",
+      "codex",
+    ]);
+    expect(
+      parseFlags([
+        "--provider",
+        "codex",
+        "--provider=zai,codex",
+        "--provider",
+        "claude",
+      ]).providers,
+    ).toEqual(["codex", "zai", "claude"]);
+    expect(
+      parseFlags(["--provider", "zai", "--provider", "zai"]).providers,
+    ).toEqual(["zai"]);
+    expect(
+      parseFlags(["--provider", "zai", "--provider", "codex"])
+        .explicitProviders,
+    ).toBe(true);
+    expect(
+      parseModelsFlags(["--provider", "claude", "--provider", "kimi"])
+        .providers,
+    ).toEqual(["claude", "kimi"]);
+  });
+
   it("ignores a standalone argument separator", () => {
     expect(parseFlags(["--", "--provider", "grok", "--json"])).toMatchObject({
       providers: ["grok"],
@@ -1895,6 +1925,196 @@ describe("default TOON decision blocks", () => {
       "openrouter",
       "zai",
     ]);
+    expect(output).not.toContain("omitted");
+  });
+
+  it("omits only absent providers and counts them in one help line", async () => {
+    stubNotSetUpFleet();
+    const output = await capture([]);
+    const stayed = ["agy", "claude", "codex", "cursor", "grok", "minimax"];
+
+    expect(namedProviders(output)).toEqual(stayed);
+    expect(output).toContain(
+      "10 providers not set up are omitted; run `quota-axi --full` to list them",
+    );
+    expect(output).toContain("degraded_source");
+    const keychainAt = output.indexOf("Tell your user:");
+    const omittedAt = output.indexOf("10 providers not set up are omitted");
+    const tierAt = output.indexOf(
+      "Run `quota-axi --full` for windows, pace, reserve, and account evidence",
+    );
+    expect(keychainAt).toBeGreaterThan(-1);
+    expect(keychainAt).toBeLessThan(omittedAt);
+    expect(omittedAt).toBeLessThan(tierAt);
+    expect(process.exitCode).toBeUndefined();
+
+    const full = await capture(["--full"]);
+    expect(namedProviders(full)).toEqual(
+      Object.keys(PROVIDERS).sort() as string[],
+    );
+    expect(full).not.toContain("omitted");
+  });
+
+  it("keeps an explicitly requested absent provider and restores it with --full", async () => {
+    stubNotSetUpFleet();
+    const requested = await capture(["--provider", "zai"]);
+
+    expect(toonRows(requested, "attention").map((row) => row[0])).toEqual([
+      "zai",
+    ]);
+    expect(requested).not.toContain("omitted");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("uses the singular omission line for one provider that is not set up", async () => {
+    stubEveryProvider((id) =>
+      id === "elevenlabs" ? notSetUpQuota(id) : emptyFreshQuota(id, id),
+    );
+
+    const output = await capture([]);
+
+    expect(output).toContain(
+      "1 provider not set up is omitted; run `quota-axi --full` to list it",
+    );
+    expect(output).not.toContain("elevenlabs");
+    expect(toonRows(output, "attention").map((row) => row[0])).toEqual(
+      Object.keys(PROVIDERS).filter((id) => id !== "elevenlabs"),
+    );
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("exits 1 with empty decision blocks when every provider is not set up", async () => {
+    stubEveryProvider((id) => notSetUpQuota(id));
+
+    const output = await capture([]);
+
+    expect(output).toContain("quota[0]:");
+    expect(output).toContain("exhaustion[0]:");
+    expect(output).toContain("attention[0]:");
+    expect(output).toContain(
+      `${Object.keys(PROVIDERS).length} providers not set up are omitted; run \`quota-axi --full\` to list them`,
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("marks absent lanes notSetUp in JSON and still lists every provider", async () => {
+    stubNotSetUpFleet();
+
+    const lean = JSON.parse(await capture(["--json"])) as QuotaAxiResponse;
+    const full = JSON.parse(
+      await capture(["--json", "--full"]),
+    ) as QuotaAxiResponse;
+
+    expect(lean.schemaVersion).toBe(5);
+    expect(full.schemaVersion).toBe(5);
+    expect(lean.providers.map((provider) => provider.provider)).toEqual(
+      Object.keys(PROVIDERS),
+    );
+    expect(full.providers.map((provider) => provider.provider)).toEqual(
+      Object.keys(PROVIDERS),
+    );
+    for (const report of [lean, full]) {
+      expect(
+        report.providers.find((provider) => provider.provider === "zai")
+          ?.notSetUp,
+      ).toBe(true);
+      expect(
+        report.providers.find((provider) => provider.provider === "copilot")
+          ?.notSetUp,
+      ).toBe(true);
+      for (const id of [
+        "agy",
+        "claude",
+        "codex",
+        "cursor",
+        "grok",
+        "minimax",
+      ]) {
+        expect(
+          report.providers.find((provider) => provider.provider === id)
+            ?.notSetUp,
+        ).toBeUndefined();
+      }
+    }
+    expect(
+      full.providers.find((provider) => provider.provider === "zai")?.attempts,
+    ).toEqual([
+      {
+        source: "env:zai",
+        status: "skipped",
+        error: "credentials_missing",
+      },
+    ]);
+    expect(JSON.stringify(lean)).not.toContain('"notSetUp":false');
+  });
+
+  it("folds an expanded provider only when every lane is absent", async () => {
+    stubEveryProvider((id) => notSetUpQuota(id));
+    PROVIDERS.codex = providerWithAccounts([
+      ["openai-codex", notSetUpQuota("codex")],
+      ["openai-codex-work", freshCodexQuota()],
+    ]);
+
+    const output = await capture([]);
+
+    expect(output).toContain("openai-codex");
+    expect(output).toContain("openai-codex-work");
+    expect(namedProviders(output)).toEqual(["codex"]);
+    expect(output).toContain(
+      "15 providers not set up are omitted; run `quota-axi --full` to list them",
+    );
+    expect(process.exitCode).toBeUndefined();
+
+    const json = JSON.parse(await capture(["--json"])) as QuotaAxiResponse;
+    expect(json.schemaVersion).toBe(6);
+    expect(json.providers).toHaveLength(Object.keys(PROVIDERS).length + 1);
+    const lanes = json.providers.filter(
+      (provider) => provider.provider === "codex",
+    );
+    expect(lanes.map((lane) => lane.accountKey)).toEqual([
+      "openai-codex",
+      "openai-codex-work",
+    ]);
+    expect(
+      lanes.find((lane) => lane.accountKey === "openai-codex")?.notSetUp,
+    ).toBe(true);
+    expect(
+      lanes.find((lane) => lane.accountKey === "openai-codex-work")?.notSetUp,
+    ).toBeUndefined();
+    expect(
+      json.providers
+        .filter((provider) => provider.provider !== "codex")
+        .every((provider) => provider.notSetUp === true),
+    ).toBe(true);
+
+    const restored = await capture(["--full"]);
+    expect(namedProviders(restored)).toEqual(
+      Object.keys(PROVIDERS).sort() as string[],
+    );
+    expect(restored).not.toContain("omitted");
+  });
+
+  it("renders repeated --provider the same as one comma-separated flag", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T12:00:00.000Z"));
+    stubEveryProvider((id) => notSetUpQuota(id));
+    PROVIDERS.codex = providerWithQuota(freshCodexQuota());
+    PROVIDERS.zai = providerWithQuota(notSetUpQuota("zai"));
+
+    const repeated = await capture([
+      "--provider",
+      "zai",
+      "--provider",
+      "codex",
+    ]);
+    const comma = await capture(["--provider", "zai,codex"]);
+
+    expect(repeated).toBe(comma);
+    expect(repeated).toContain(
+      "zai,all,auth_required,zai_credential_unavailable",
+    );
+    expect(toonRows(repeated, "quota").map((row) => row[0])).toEqual(["codex"]);
+    expect(repeated).not.toContain("omitted");
   });
 
   it("never adds a false unresolved_windows row for a never-set-up OpenCode Go", async () => {
@@ -2603,6 +2823,119 @@ function providerWithAccounts(
       }));
     },
   };
+}
+
+function stubEveryProvider(
+  quotaFor: (id: ProviderQuota["provider"]) => ProviderQuota,
+): void {
+  useTempCache();
+  for (const id of Object.keys(PROVIDERS) as ProviderQuota["provider"][]) {
+    PROVIDERS[id] = providerWithQuota(quotaFor(id));
+  }
+}
+
+/**
+ * One of each presence the omission rule has to tell apart: a stale reading,
+ * a Keychain prompt, a degraded store, a provider that recorded no attempts,
+ * an adapter-declared uncertain skip, a failed request, an incidental-source
+ * login that is still absence, and everyone else genuinely not set up.
+ */
+function stubNotSetUpFleet(): void {
+  stubEveryProvider((id) => notSetUpQuota(id));
+  PROVIDERS.codex = providerWithQuota({
+    ...staleClaudeQuota(),
+    provider: "codex",
+    label: "Codex",
+  });
+  PROVIDERS.claude = providerWithQuota({
+    ...notSetUpQuota("claude"),
+    state: {
+      status: "unavailable",
+      stale: false,
+      error: "keychain_prompt_required",
+    },
+    attempts: [
+      {
+        source: "oauth-file",
+        status: "skipped",
+        error: "credentials_missing",
+      },
+      {
+        source: "keychain",
+        status: "skipped",
+        error: "keychain_prompt_required",
+        credentialPresent: true,
+      },
+    ],
+  });
+  PROVIDERS.cursor = providerWithQuota({
+    ...notSetUpQuota("cursor"),
+    state: {
+      status: "unavailable",
+      stale: false,
+      error: "state-vscdb unreadable",
+      degradedSources: [{ source: "state-vscdb", error: "unreadable" }],
+    },
+    attempts: [
+      {
+        source: "state-vscdb",
+        status: "skipped",
+        error: "unreadable",
+        credentialPresent: true,
+        degraded: true,
+      },
+    ],
+  });
+  const minimax = notSetUpQuota("minimax");
+  delete minimax.attempts;
+  PROVIDERS.minimax = providerWithQuota(minimax);
+  PROVIDERS.agy = {
+    ...providerWithQuota({
+      ...notSetUpQuota("agy"),
+      state: {
+        status: "unavailable",
+        stale: false,
+        error: "agy CLI timed out",
+      },
+      attempts: [
+        { source: "cli", status: "skipped", error: "agy CLI timed out" },
+      ],
+    }),
+    isUncertainSkip: (attempt) => attempt.error === "agy CLI timed out",
+  };
+  PROVIDERS.grok = providerWithQuota({
+    ...notSetUpQuota("grok"),
+    state: { status: "error", stale: false, error: "network down" },
+    attempts: [{ source: "web", status: "failed", error: "network down" }],
+  });
+  PROVIDERS.copilot = {
+    ...providerWithQuota({
+      ...notSetUpQuota("copilot"),
+      attempts: [
+        {
+          source: "apps-json",
+          status: "skipped",
+          error: "credentials_missing",
+        },
+        {
+          source: "gh:hosts.yml",
+          status: "skipped",
+          error: "credentials_keyring_storage",
+          credentialPresent: true,
+        },
+      ],
+    }),
+    incidentalSources: ["gh:hosts.yml"],
+  };
+}
+
+function namedProviders(output: string): string[] {
+  return [
+    ...new Set([
+      ...toonRows(output, "quota").map((row) => row[0] ?? ""),
+      ...toonRows(output, "attention").map((row) => row[0] ?? ""),
+    ]),
+  ].sort();
 }
 
 function notSetUpQuota(provider: ProviderQuota["provider"]): ProviderQuota {

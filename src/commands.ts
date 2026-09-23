@@ -59,13 +59,51 @@ export async function quotaCommand(
   if (flags.tui) return quotaTuiReport(flags, options);
 
   const response = await loadQuota(flags.providers, options, false);
-  return flags.json
-    ? JSON.stringify(quotaJsonReport(response, flags.full), null, 2)
-    : renderQuotaToon(
-        redactedResponse(response, flags.full),
-        binPath,
-        flags.full,
-      );
+  // Presence reads source attempts, which redaction removes, so both the JSON
+  // marker and the TOON omission are classified on the complete model first.
+  // The same rule as the human report: an explicit --provider never folds,
+  // and --full adds the omitted rows back instead of counting them.
+  const laneAbsent = response.providers.map(
+    (provider) =>
+      providerPresence(provider, PROVIDERS[provider.provider]) === "absent",
+  );
+  if (flags.json) {
+    return JSON.stringify(
+      quotaJsonReport(response, flags.full, laneAbsent),
+      null,
+      2,
+    );
+  }
+  return renderQuotaToon(
+    redactedResponse(response, flags.full),
+    binPath,
+    flags.full,
+    flags.full || flags.explicitProviders
+      ? []
+      : omittedAbsentProviderIds(response.providers, laneAbsent),
+  );
+}
+
+/**
+ * Provider ids whose every lane is absent, in first-seen order. One live or
+ * uncertain lane keeps the provider's rows; schema 6 folds a provider only
+ * when all of its lanes are absent.
+ */
+function omittedAbsentProviderIds(
+  providers: ProviderQuota[],
+  laneAbsent: readonly boolean[],
+): ProviderId[] {
+  const everyLaneAbsent = new Map<ProviderId, boolean>();
+  providers.forEach((provider, index) => {
+    const absent = laneAbsent[index] === true;
+    everyLaneAbsent.set(
+      provider.provider,
+      (everyLaneAbsent.get(provider.provider) ?? true) && absent,
+    );
+  });
+  return [...everyLaneAbsent.entries()]
+    .filter(([, absent]) => absent)
+    .map(([id]) => id);
 }
 
 /**
