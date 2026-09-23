@@ -390,6 +390,7 @@ Discovery order is the built-in `openai-codex` entry, then other `openai-codex-*
 Two keys that carry the same stored `accountId` are the same ChatGPT account and are not reported as extra capacity.
 The later key stays a credential fallback until a probe succeeds or every candidate is rejected.
 The lane keeps the first key as its `accountKey`, while `source` names the key that answered.
+The row's `accountKeys` lists every credential key folded into that lane, including the published `accountKey`.
 A key whose identity cannot be compared is left as its own lane so the uncertainty stays visible.
 
 When only the built-in Pi entry (or none) is present, Codex keeps its existing single-winner path: native `$CODEX_HOME/auth.json`, then `openai-codex`, then the CLI fallback.
@@ -409,6 +410,12 @@ A proven sign-out, or a native login that coalesces into a Pi lane with a fresh 
 
 When a provider expands to multiple accounts, the report uses quota `schemaVersion: 6` (auth and models use version 2).
 Every provider record then has an `accountKey`; providers still using one selected account use the literal `default`.
+Every schema 6 quota row also has `accountKeys`: the credential keys that one row covers, own `accountKey` first, then any keys folded into it in the order the provider recorded them.
+A consumer that holds a credential key binds the row whose `accountKeys` contains that key. Matching `accountKey` alone misses a key that was folded into another row.
+The `default` filler is `accountKeys: ["default"]`. That provider did not discover multiple accounts, so the row covers the single selected lane and no other credential key.
+Schema 5 omits `accountKeys`. Nothing expanded, the keyless row is the single selected lane, and that report stays byte-compatible.
+`accountKeys` is a quota JSON field. Auth still lists each discovered lane on its own, because a fold that depends on the quota reading has not happened there. TOON does not add a column: its flat blocks already name the published lane by `accountKey`, and the membership list is the JSON account row's join field.
+`src/providers/accounts.ts` publishes the list for every expanded lane. A lane covers only its own key unless the adapter sets `ProviderAccount.accountKeys` to the keys it folded in, including a key it learns during the read. Codex is the only adapter that discovers accounts today. Claude, Kimi, Cursor, and the other adapters do not fold lanes, and a later discoverer uses the same field. The list is not cached.
 Every flat TOON block adds `accountKey` immediately after `provider`, and the quota/exhaustion/attention join becomes **`provider` + `accountKey` + `scope`**.
 Models and model sort ties use **`provider` + `accountKey` + `id`**.
 Models `unmatchedWindowIds` entries gain the same key, so an unmapped window reads `provider/accountKey/scope` instead of `provider/scope`; the key keeps two accounts of one provider from reporting the same unmapped window indistinguishably.
@@ -439,7 +446,7 @@ The `quota` command's `--json` emits `schemaVersion: 5`, or `6` when a provider 
 
 The package publishes TypeScript declarations from its package root, so consumers can use `import type { QuotaAxiResponse, ModelsResponse } from "quota-axi"`. The adapter contract is `ProviderAdapter` in and normalized `ProviderQuota` out: adapters report observed quota data, never rank, mint credentials, or retain raw responses. The narrowly bounded vendor-owned renewal path is documented under [Delegated credential refresh](#delegated-credential-refresh).
 
-`schemaVersion` is command-specific. Additive optional fields do not bump it. A semantic or incompatible shape change does. The legacy single-account `quota` report is version 5, `auth` is version 1, and `models` is version 1. When account discovery expands a provider, those versions are 6, 2, and 2 respectively.
+`schemaVersion` is command-specific. Additive optional fields do not bump it. A semantic or incompatible shape change does. The legacy single-account `quota` report is version 5, `auth` is version 1, and `models` is version 1. When account discovery expands a provider, those versions are 6, 2, and 2 respectively. `accountKeys` on a schema 6 quota row is one of those additive fields.
 
 ### Default report blocks
 
@@ -500,7 +507,7 @@ An unknown or stale scope deliberately gets **no** `quota[]` row: the absence of
 | `effectiveAvailability[].pace.behindWindowIds`, `onPaceWindowIds`                                                                              |
 | Account identity (`account`) and per-source `attempts`                                                                                         |
 
-Everything a consumer branches on stays in the default tier: `state.status`, `stale`, `authStatus`, `error`, `reason`, `remedyCommand`, `retryAfter`, `untrustedWindowIds`, and `degradedSources`; window `pace.status`, `reason`, `reservePercentPoints`, `burnMultiple`, and `shareOf` together with that share window's `percentUsed`; `quotaSemantics.status` and `unresolvedWindowIds`; every scope's `effectivePercentRemaining`, `boundedBy`, `limitingWindowIds`, `boundConflict`, `runway`, `selection`, and pace `aheadWindowIds` / `unknownWindowIds` / `worstReservePercentPoints`; and sparse `notSetUp`. `credits` also stays, so a consumer can avoid misreading it as exhaustion.
+Everything a consumer branches on stays in the default tier: `accountKey` and `accountKeys` on an account row; `state.status`, `stale`, `authStatus`, `error`, `reason`, `remedyCommand`, `retryAfter`, `untrustedWindowIds`, and `degradedSources`; window `pace.status`, `reason`, `reservePercentPoints`, `burnMultiple`, and `shareOf` together with that share window's `percentUsed`; `quotaSemantics.status` and `unresolvedWindowIds`; every scope's `effectivePercentRemaining`, `boundedBy`, `limitingWindowIds`, `boundConflict`, `runway`, `selection`, and pace `aheadWindowIds` / `unknownWindowIds` / `worstReservePercentPoints`; and sparse `notSetUp`. `credits` also stays, so a consumer can avoid misreading it as exhaustion.
 
 `notSetUp: true` is present only on a provider lane that has positive evidence of absence (the same `providerPresence` classification the human report uses). Every provider stays in `providers[]` on both default `--json` and `--full`; omitting entries would change downstream consumers that look a provider up by id. The field is additive, so `schemaVersion` stays 5, or 6 when a provider expands to multiple accounts. Default TOON is the only output that omits these providers.
 
@@ -508,12 +515,12 @@ Everything a consumer branches on stays in the default tier: `state.status`, `st
 
 ### Quota report shape
 
-| Object                        | Fields                                                                                                                                |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Quota report                  | `providers`                                                                                                                           |
-| Provider report               | `provider`, optional `accountKey`, `windows`, `quotaSemantics`, `state`, optional `plan`, optional `credits`, and optional `notSetUp` |
-| Provider report with `--full` | Also `label`, `source`, optional `account` identity, and per-source `attempts`                                                        |
-| Account identity (`--full`)   | Optional `email`, `organization`, `accountId`, and `identityStatus`                                                                   |
+| Object                        | Fields                                                                                                                                                                                   |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Quota report                  | `providers`                                                                                                                                                                              |
+| Provider report               | `provider`, optional `accountKey`, optional `accountKeys` (every account row), `windows`, `quotaSemantics`, `state`, optional `plan`, optional `credits`, and optional `notSetUp`           |
+| Provider report with `--full` | Also `label`, `source`, optional `account` identity, and per-source `attempts`                                                                                                           |
+| Account identity (`--full`)   | Optional `email`, `organization`, `accountId`, and `identityStatus`                                                                                                                      |
 
 Account identity and per-source `attempts` are omitted unless `--full` is passed.
 Claude `identityStatus` is `verified` only when Anthropic returns an authoritative account identifier; `email` and `organization` are display-only and must not be used for duplicate detection.

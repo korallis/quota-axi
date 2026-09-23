@@ -2461,6 +2461,80 @@ describe("default TOON decision blocks", () => {
       ["codex", "openai-codex"],
       ["codex", "openai-codex-work"],
     ]);
+    expect(output).not.toContain("accountKeys");
+  });
+
+  it("publishes accountKeys for a non-folding provider and for lanes that name their own membership", async () => {
+    useTempCache();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T12:00:00.000Z"));
+    PROVIDERS.claude = providerWithQuota(pacedProvider("claude", 90, 10));
+    const home = pacedProvider("codex", 20, 80);
+    const work = pacedProvider("codex", 40, 60);
+    PROVIDERS.codex = {
+      ...providerWithAccounts([
+        ["codex-home", home],
+        ["openai-codex-work", work],
+      ]),
+      async discoverAccounts() {
+        return [
+          {
+            accountKey: "codex-home",
+            accountKeys: ["codex-home", "openai-codex"],
+            async fetchQuota() {
+              return home;
+            },
+            async inspectAuth() {
+              return { provider: "codex", sources: [] };
+            },
+          },
+          {
+            accountKey: "openai-codex-work",
+            async fetchQuota() {
+              return work;
+            },
+            async inspectAuth() {
+              return { provider: "codex", sources: [] };
+            },
+          },
+        ];
+      },
+    };
+
+    const json = JSON.parse(
+      await capture(["--provider", "claude,codex", "--json"]),
+    ) as QuotaAxiResponse;
+    expect(json.schemaVersion).toBe(6);
+    expect(
+      json.providers.map((provider) => [
+        provider.provider,
+        provider.accountKey,
+        provider.accountKeys,
+      ]),
+    ).toEqual([
+      ["claude", "default", ["default"]],
+      ["codex", "codex-home", ["codex-home", "openai-codex"]],
+      ["codex", "openai-codex-work", ["openai-codex-work"]],
+    ]);
+
+    const full = JSON.parse(
+      await capture(["--provider", "claude,codex", "--json", "--full"]),
+    ) as QuotaAxiResponse;
+    expect(full.providers.map((provider) => provider.accountKeys)).toEqual([
+      ["default"],
+      ["codex-home", "openai-codex"],
+      ["openai-codex-work"],
+    ]);
+
+    const toon = await capture(["--provider", "claude,codex"]);
+    expect(toon).not.toContain("accountKeys");
+
+    const single = JSON.parse(
+      await capture(["--provider", "claude", "--json"]),
+    ) as QuotaAxiResponse;
+    expect(single.schemaVersion).toBe(5);
+    expect(single.providers[0]?.accountKey).toBeUndefined();
+    expect(single.providers[0]?.accountKeys).toBeUndefined();
   });
 });
 

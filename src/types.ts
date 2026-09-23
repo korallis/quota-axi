@@ -272,6 +272,13 @@ export type DegradedSource = {
 export type ProviderAccount = {
   /** Opaque local lane identity, stable across refresh and discovery order. */
   accountKey: string;
+  /**
+   * Credential keys folded into this lane. The collector publishes the lane's
+   * own `accountKey` plus these keys on the expanded quota row. Absent means
+   * the lane covers only its own key. A provider may append a key during the
+   * read, when identity is known only after the probe.
+   */
+  accountKeys?: string[];
   /** Resolves undefined when the lane establishes no distinct account. */
   fetchQuota(options: ProviderOptions): Promise<ProviderQuota | undefined>;
   inspectAuth(options: ProviderOptions): Promise<AuthProviderReport>;
@@ -281,6 +288,12 @@ export type ProviderQuota = {
   provider: ProviderId;
   /** Present in account-expanded reports; absent for the legacy single lane. */
   accountKey?: string;
+  /**
+   * Every credential key this row covers, own `accountKey` first.
+   * Present on every schema 6 provider row, including the `default` filler.
+   * Absent on schema 5.
+   */
+  accountKeys?: string[];
   /** Display name. Omitted from default `--json`; see `--full`. */
   label?: string;
   /** Report provenance. Omitted from default `--json`; see `--full`. */

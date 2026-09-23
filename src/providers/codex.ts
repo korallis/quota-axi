@@ -151,6 +151,10 @@ export async function fetchQuota(
 
 const CODEX_HOME_ACCOUNT_KEY = "codex-home";
 
+function coverAccountKey(keys: string[], key: string): void {
+  if (!keys.includes(key)) keys.push(key);
+}
+
 /**
  * `cacheKey` is the lane's cache slot and must be the key the collection will
  * publish: it stays absent on the legacy single-winner path and on a lone
@@ -198,6 +202,8 @@ async function discoverCodexAccounts(
     account: Extract<CodexAccountContext, { kind: "pi" }>;
     storedAccountId?: string;
     reading?: Promise<ProviderQuota>;
+    /** Credential keys this lane covers, own key first. Mutable during the read. */
+    accountKeys: string[];
   }[] = [];
   const piLaneByAccountId = new Map<string, (typeof piLanes)[number]>();
   for (const piProviderId of ids) {
@@ -215,6 +221,7 @@ async function discoverCodexAccounts(
       const existing = piLaneByAccountId.get(storedAccountId);
       if (existing) {
         (existing.account.extraPiProviderIds ??= []).push(piProviderId);
+        coverAccountKey(existing.accountKeys, piProviderId);
         continue;
       }
     }
@@ -224,11 +231,17 @@ async function discoverCodexAccounts(
         piProviderId,
       },
       storedAccountId,
+      accountKeys: [piProviderId],
     };
     piLanes.push(lane);
     if (storedAccountId !== undefined) {
       piLaneByAccountId.set(storedAccountId, lane);
     }
+  }
+
+  const nativeAccountKeys = [CODEX_HOME_ACCOUNT_KEY];
+  if (nativeAccount.includesBuiltinPi) {
+    nativeAccountKeys.push(PI_CODEX_BUILTIN_ID);
   }
 
   if ((hasNativeLane ? 1 : 0) + piLanes.length > 1) {
@@ -257,6 +270,7 @@ async function discoverCodexAccounts(
   if (hasNativeLane) {
     accounts.push({
       accountKey: CODEX_HOME_ACCOUNT_KEY,
+      accountKeys: nativeAccountKeys,
       fetchQuota: async (options) => {
         const reading = await readNative(options);
         const accountId =
@@ -266,6 +280,9 @@ async function discoverCodexAccounts(
           const piReading = await readPi(lane, options);
           if (laneIdentity(piReading, lane.storedAccountId) !== accountId) {
             continue;
+          }
+          for (const key of nativeAccountKeys) {
+            coverAccountKey(lane.accountKeys, key);
           }
           if (
             reading.state.status === "fresh" ||
@@ -284,6 +301,7 @@ async function discoverCodexAccounts(
   for (const lane of piLanes) {
     accounts.push({
       accountKey: lane.account.piProviderId,
+      accountKeys: lane.accountKeys,
       fetchQuota: async (options) => {
         const report = await readPi(lane, options);
         const accountId = laneIdentity(report, lane.storedAccountId);
