@@ -136,7 +136,7 @@ export function createCodexAdapter(
     id: "codex",
     label: "Codex",
     discoverAccounts: () => discoverCodexAccounts(dependencies),
-    fetchQuota: (options) => fetchQuotaWithDependencies(dependencies, options),
+    fetchQuota: (options) => fetchSingleWinnerQuota(dependencies, options),
     inspectAuth: (_options) => inspectAuthWithDependencies(dependencies),
   };
 }
@@ -146,13 +146,60 @@ export const codexAdapter = createCodexAdapter();
 export async function fetchQuota(
   options: ProviderOptions,
 ): Promise<ProviderQuota> {
-  return fetchQuotaWithDependencies(defaultCodexDependencies, options);
+  return fetchSingleWinnerQuota(defaultCodexDependencies, options);
 }
 
 const CODEX_HOME_ACCOUNT_KEY = "codex-home";
 
-function coverAccountKey(keys: string[], key: string): void {
-  if (!keys.includes(key)) keys.push(key);
+/**
+ * Keys folded into a row because their stored account id matched the row's.
+ * A fresh reading that names another account disproves that match, so only a
+ * folded key that itself answered the reading still belongs to the row.
+ */
+function foldedAccountKeys(
+  report: ProviderQuota,
+  storedAccountId: string | undefined,
+  keys: readonly string[],
+): string[] {
+  const liveAccountId =
+    report.state.status === "fresh" ? report.account?.accountId : undefined;
+  if (liveAccountId === undefined || liveAccountId === storedAccountId) {
+    return [...keys];
+  }
+  return keys.filter((key) => piCodexSource(key) === report.source);
+}
+
+/**
+ * The single-winner row covers the key whose credential answered, plus the
+ * other native or built-in Pi key when both store the same account.
+ */
+async function fetchSingleWinnerQuota(
+  dependencies: CodexDependencies,
+  options: ProviderOptions,
+): Promise<ProviderQuota> {
+  const report = await fetchQuotaWithDependencies(dependencies, options);
+  if (isProfileOnly(options)) return report;
+  const [ownKey, otherKey] =
+    report.source === PI_CODEX_CREDENTIAL_SOURCE
+      ? [PI_CODEX_BUILTIN_ID, CODEX_HOME_ACCOUNT_KEY]
+      : [CODEX_HOME_ACCOUNT_KEY, PI_CODEX_BUILTIN_ID];
+  const nativeState = readCredentialState();
+  const nativeStoredAccountId =
+    nativeState.status === "available" || nativeState.status === "expired"
+      ? nativeState.credentials.accountId
+      : undefined;
+  let builtinResolution: PiCodexCredentialResolution;
+  try {
+    builtinResolution = await dependencies.piCodexBroker.resolve();
+  } catch {
+    builtinResolution = { status: "error" };
+  }
+  const folded =
+    nativeStoredAccountId !== undefined &&
+    nativeStoredAccountId === resolvedAccountId(builtinResolution)
+      ? foldedAccountKeys(report, nativeStoredAccountId, [otherKey])
+      : [];
+  return { ...report, accountKeys: [ownKey, ...folded] };
 }
 
 /**
@@ -202,8 +249,8 @@ async function discoverCodexAccounts(
     account: Extract<CodexAccountContext, { kind: "pi" }>;
     storedAccountId?: string;
     reading?: Promise<ProviderQuota>;
-    /** Credential keys this lane covers, own key first. Mutable during the read. */
-    accountKeys: string[];
+    /** Native keys whose reading collapsed into this lane. */
+    nativeAccountKeys?: string[];
   }[] = [];
   const piLaneByAccountId = new Map<string, (typeof piLanes)[number]>();
   for (const piProviderId of ids) {
@@ -221,7 +268,6 @@ async function discoverCodexAccounts(
       const existing = piLaneByAccountId.get(storedAccountId);
       if (existing) {
         (existing.account.extraPiProviderIds ??= []).push(piProviderId);
-        coverAccountKey(existing.accountKeys, piProviderId);
         continue;
       }
     }
@@ -231,17 +277,11 @@ async function discoverCodexAccounts(
         piProviderId,
       },
       storedAccountId,
-      accountKeys: [piProviderId],
     };
     piLanes.push(lane);
     if (storedAccountId !== undefined) {
       piLaneByAccountId.set(storedAccountId, lane);
     }
-  }
-
-  const nativeAccountKeys = [CODEX_HOME_ACCOUNT_KEY];
-  if (nativeAccount.includesBuiltinPi) {
-    nativeAccountKeys.push(PI_CODEX_BUILTIN_ID);
   }
 
   if ((hasNativeLane ? 1 : 0) + piLanes.length > 1) {
@@ -266,24 +306,56 @@ async function discoverCodexAccounts(
       options,
       lane.account,
     ));
+  const readPiOrNative = async (
+    lane: (typeof piLanes)[number],
+    options: ProviderOptions,
+  ): Promise<ProviderQuota> => {
+    const report = await readPi(lane, options);
+    const accountId = laneIdentity(report, lane.storedAccountId);
+    if (report.state.status === "fresh" || !hasNativeLane || !accountId) {
+      return report;
+    }
+    const reading = await readNative(options);
+    if (
+      !reading ||
+      laneIdentity(reading, nativeStoredAccountId) !== accountId ||
+      !(
+        reading.state.status === "fresh" ||
+        (reading.state.stale && !report.state.stale)
+      )
+    ) {
+      return report;
+    }
+    const attempts = [...(report.attempts ?? []), ...(reading.attempts ?? [])];
+    return {
+      ...reading,
+      attempts,
+      state: { ...reading.state, sourcesTried: sourceNames(attempts) },
+    };
+  };
   const accounts: ProviderAccount[] = [];
   if (hasNativeLane) {
     accounts.push({
       accountKey: CODEX_HOME_ACCOUNT_KEY,
-      accountKeys: nativeAccountKeys,
       fetchQuota: async (options) => {
         const reading = await readNative(options);
-        const accountId =
-          reading && laneIdentity(reading, nativeStoredAccountId);
-        if (!reading || !accountId) return reading;
+        if (!reading) return undefined;
+        const accountKeys = [
+          CODEX_HOME_ACCOUNT_KEY,
+          ...foldedAccountKeys(
+            reading,
+            nativeStoredAccountId,
+            nativeAccount.includesBuiltinPi ? [PI_CODEX_BUILTIN_ID] : [],
+          ),
+        ];
+        const accountId = laneIdentity(reading, nativeStoredAccountId);
+        if (!accountId) return { ...reading, accountKeys };
         for (const lane of piLanes) {
           const piReading = await readPi(lane, options);
           if (laneIdentity(piReading, lane.storedAccountId) !== accountId) {
             continue;
           }
-          for (const key of nativeAccountKeys) {
-            coverAccountKey(lane.accountKeys, key);
-          }
+          lane.nativeAccountKeys = accountKeys;
           if (
             reading.state.status === "fresh" ||
             piReading.state.status === "fresh"
@@ -292,7 +364,7 @@ async function discoverCodexAccounts(
           }
           return undefined;
         }
-        return reading;
+        return { ...reading, accountKeys };
       },
       inspectAuth: () =>
         inspectAuthWithDependencies(dependencies, nativeAccount),
@@ -301,32 +373,19 @@ async function discoverCodexAccounts(
   for (const lane of piLanes) {
     accounts.push({
       accountKey: lane.account.piProviderId,
-      accountKeys: lane.accountKeys,
       fetchQuota: async (options) => {
-        const report = await readPi(lane, options);
-        const accountId = laneIdentity(report, lane.storedAccountId);
-        if (report.state.status === "fresh" || !hasNativeLane || !accountId) {
-          return report;
-        }
-        const reading = await readNative(options);
-        if (
-          !reading ||
-          laneIdentity(reading, nativeStoredAccountId) !== accountId ||
-          !(
-            reading.state.status === "fresh" ||
-            (reading.state.stale && !report.state.stale)
-          )
-        ) {
-          return report;
-        }
-        const attempts = [
-          ...(report.attempts ?? []),
-          ...(reading.attempts ?? []),
-        ];
+        const report = await readPiOrNative(lane, options);
         return {
-          ...reading,
-          attempts,
-          state: { ...reading.state, sourcesTried: sourceNames(attempts) },
+          ...report,
+          accountKeys: [
+            lane.account.piProviderId,
+            ...foldedAccountKeys(
+              report,
+              lane.storedAccountId,
+              lane.account.extraPiProviderIds ?? [],
+            ),
+            ...(lane.nativeAccountKeys ?? []),
+          ],
         };
       },
       inspectAuth: () =>

@@ -70,20 +70,18 @@ export async function fetchAccountQuotas(
     }
     if (report) readings.push({ account, report });
   }
-  if (accounts.length > 1) {
-    for (const { account, report } of readings) {
-      report.accountKey = account.accountKey;
-      report.accountKeys = coveredAccountKeys(
-        account.accountKey,
-        account.accountKeys,
-      );
-    }
+  for (const { account, report } of readings) {
+    if (accounts.length > 1) report.accountKey = account.accountKey;
+    report.accountKeys = coveredAccountKeys(
+      account.accountKey,
+      report.accountKeys,
+    );
   }
   return readings.map(({ report }) => report);
 }
 
 /**
- * Credential keys one expanded account row covers.
+ * Credential keys one account row covers.
  *
  * The lane's own key is first. A provider that folded other credentials into
  * the lane lists them after it, in the order it recorded them. Callers that

@@ -1590,26 +1590,120 @@ describe("Codex Pi sibling account lanes", () => {
     );
   });
 
-  it("omits accountKeys while Codex stays on the single-account path", async () => {
-    writePiAuth({
-      "openai-codex": piOauthEntry({
-        access: "personal-access-token",
-        accountId: "acct-personal",
-      }),
-    });
-    stubUsageByAccount({
-      "acct-personal": usage(12, "personal@example.invalid", "acct-personal"),
-    });
+  it("drops a folded Pi sibling when the lane's fresh reading names another account", async () => {
+    await expectPublishedMembership(
+      { token: "native-access-token", accountId: "acct-z" },
+      {
+        "openai-codex": {
+          token: "personal-access-token",
+          accountId: "acct-a",
+          liveAccountId: "acct-c",
+        },
+        "openai-codex-work": {
+          token: "work-access-token",
+          accountId: "acct-a",
+        },
+      },
+      [
+        { accountKey: "codex-home", accountKeys: ["codex-home"] },
+        { accountKey: "openai-codex", accountKeys: ["openai-codex"] },
+      ],
+    );
+  });
 
-    const { fetchQuota } = await import("../../src/commands.js");
-    const response = await fetchQuota(["codex"], OPTIONS);
-    const json = quotaJsonReport(response, false);
-    expect(json.schemaVersion).toBe(5);
-    expect(json.providers).toHaveLength(1);
-    expect(json.providers[0]?.accountKey).toBeUndefined();
-    expect(json.providers[0]?.accountKeys).toBeUndefined();
-    expect(renderQuotaToon(response, "/quota-axi", false)).not.toContain(
-      "accountKeys",
+  it("drops the folded built-in key when the native reading names another account", async () => {
+    await expectPublishedMembership(
+      {
+        token: "native-access-token",
+        accountId: "acct-a",
+        liveAccountId: "acct-b",
+      },
+      {
+        "openai-codex": {
+          token: "personal-access-token",
+          accountId: "acct-a",
+        },
+        "openai-codex-work": {
+          token: "work-access-token",
+          accountId: "acct-b",
+        },
+      },
+      [
+        {
+          accountKey: "openai-codex-work",
+          accountKeys: ["openai-codex-work", "codex-home"],
+        },
+      ],
+    );
+  });
+
+  it("publishes both Pi keys on the one lane they fold into without a native login", async () => {
+    await expectPublishedMembership(
+      undefined,
+      {
+        "openai-codex": {
+          token: "personal-access-token",
+          accountId: "acct-a",
+        },
+        "openai-codex-work": {
+          token: "work-access-token",
+          accountId: "acct-a",
+        },
+      },
+      [{ accountKeys: ["openai-codex", "openai-codex-work"] }],
+    );
+  });
+
+  it("publishes the native and built-in keys on the single-account row that share an account", async () => {
+    await expectPublishedMembership(
+      { token: "native-access-token", accountId: "acct-a" },
+      {
+        "openai-codex": {
+          token: "personal-access-token",
+          accountId: "acct-a",
+        },
+      },
+      [{ accountKeys: ["codex-home", "openai-codex"] }],
+    );
+  });
+
+  it("publishes only the answering key on the single-account row for distinct accounts", async () => {
+    await expectPublishedMembership(
+      { token: "native-access-token", accountId: "acct-a" },
+      {
+        "openai-codex": {
+          token: "personal-access-token",
+          accountId: "acct-b",
+        },
+      },
+      [{ accountKeys: ["codex-home"] }],
+    );
+    await expectPublishedMembership(
+      undefined,
+      {
+        "openai-codex": {
+          token: "personal-access-token",
+          accountId: "acct-b",
+        },
+      },
+      [{ accountKeys: ["openai-codex"] }],
+    );
+  });
+
+  it("drops the built-in key from the single-account row when the native reading names another account", async () => {
+    await expectPublishedMembership(
+      {
+        token: "native-access-token",
+        accountId: "acct-a",
+        liveAccountId: "acct-b",
+      },
+      {
+        "openai-codex": {
+          token: "personal-access-token",
+          accountId: "acct-a",
+        },
+      },
+      [{ accountKeys: ["codex-home"] }],
     );
   });
 
@@ -1645,12 +1739,19 @@ describe("Codex Pi sibling account lanes", () => {
   });
 });
 
+type MembershipCredential = {
+  token: string;
+  accountId: string;
+  liveAccountId?: string;
+};
+
 async function expectPublishedMembership(
-  native: { token: string; accountId: string },
-  pi: Record<string, { token: string; accountId: string }>,
-  expected: { accountKey: string; accountKeys: string[] }[],
+  native: MembershipCredential | undefined,
+  pi: Record<string, MembershipCredential>,
+  expected: { accountKey?: string; accountKeys: string[] }[],
 ): Promise<void> {
-  writeNativeAuth(native.token, native.accountId);
+  rmSync(join(process.env.CODEX_HOME!, "auth.json"), { force: true });
+  if (native) writeNativeAuth(native.token, native.accountId);
   writePiAuth(
     Object.fromEntries(
       Object.entries(pi).map(([id, entry]) => [
@@ -1659,18 +1760,25 @@ async function expectPublishedMembership(
       ]),
     ),
   );
-  const responses: Record<string, Response> = {
-    [native.token]: usage(10, "native@example.invalid", native.accountId),
-  };
-  for (const entry of Object.values(pi)) {
-    responses[entry.token] = usage(20, "pi@example.invalid", entry.accountId);
+  const responses: Record<string, Response> = {};
+  for (const [email, entry] of [
+    ...(native ? [["native@example.invalid", native] as const] : []),
+    ...Object.values(pi).map((entry) => ["pi@example.invalid", entry] as const),
+  ]) {
+    responses[entry.token] = usage(
+      native === entry ? 10 : 20,
+      email,
+      entry.liveAccountId ?? entry.accountId,
+    );
   }
   stubUsageByToken(responses);
 
   const { fetchQuota } = await import("../../src/commands.js");
   const response = await fetchQuota(["codex"], OPTIONS);
   const json = quotaJsonReport(response, false);
-  expect(json.schemaVersion).toBe(6);
+  expect(json.schemaVersion).toBe(
+    expected.some((row) => row.accountKey) ? 6 : 5,
+  );
   expect(
     json.providers.map((provider) => ({
       accountKey: provider.accountKey,

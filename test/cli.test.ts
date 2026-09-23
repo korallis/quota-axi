@@ -2464,7 +2464,7 @@ describe("default TOON decision blocks", () => {
     expect(output).not.toContain("accountKeys");
   });
 
-  it("publishes accountKeys for a non-folding provider and for lanes that name their own membership", async () => {
+  it("publishes accountKeys for a non-folding provider and for lanes whose readings name their membership", async () => {
     useTempCache();
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-15T12:00:00.000Z"));
@@ -2480,9 +2480,8 @@ describe("default TOON decision blocks", () => {
         return [
           {
             accountKey: "codex-home",
-            accountKeys: ["codex-home", "openai-codex"],
             async fetchQuota() {
-              return home;
+              return { ...home, accountKeys: ["openai-codex"] };
             },
             async inspectAuth() {
               return { provider: "codex", sources: [] };
@@ -2534,7 +2533,7 @@ describe("default TOON decision blocks", () => {
     ) as QuotaAxiResponse;
     expect(single.schemaVersion).toBe(5);
     expect(single.providers[0]?.accountKey).toBeUndefined();
-    expect(single.providers[0]?.accountKeys).toBeUndefined();
+    expect(single.providers[0]?.accountKeys).toEqual(["default"]);
   });
 });
 

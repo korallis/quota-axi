@@ -27,12 +27,16 @@ export function annotateQuotaAdvice(
 ): QuotaAxiResponse {
   const expanded = response.providers.some((provider) => provider.accountKey);
   const providers = response.providers.map((provider) => {
-    if (!expanded) return annotateProviderAdvice(provider);
-    const accountKey = provider.accountKey ?? "default";
+    const accountKey = expanded
+      ? (provider.accountKey ?? "default")
+      : undefined;
     return annotateProviderAdvice({
       ...provider,
-      accountKey,
-      accountKeys: coveredAccountKeys(accountKey, provider.accountKeys),
+      ...(accountKey ? { accountKey } : {}),
+      accountKeys: coveredAccountKeys(
+        accountKey ?? provider.accountKeys?.[0] ?? "default",
+        provider.accountKeys,
+      ),
     });
   });
   const help = providers.flatMap(providerHelpLines);
