@@ -1707,6 +1707,69 @@ describe("Codex Pi sibling account lanes", () => {
     );
   });
 
+  it("publishes the producing Pi key on a single-account stale reading", async () => {
+    writePiAuth({
+      "openai-codex": piOauthEntry({
+        access: "pi-access-token",
+        accountId: "acct-b",
+      }),
+    });
+    stubUsageByToken({
+      "pi-access-token": usage(40, "b@example.invalid", "acct-b"),
+    });
+    await cacheCodexRead();
+
+    stubUsageByToken({
+      "pi-access-token": new Response("unavailable", { status: 503 }),
+    });
+    const [report] = await publishedCodexRows();
+    expect(report).toMatchObject({
+      state: { status: "stale", stale: true },
+      accountKeys: ["openai-codex"],
+    });
+    expect(report?.accountKey).toBeUndefined();
+  });
+
+  it("publishes the Pi key on a single-account reading whose Pi credential was rejected", async () => {
+    writePiAuth({
+      "openai-codex": piOauthEntry({
+        access: "pi-access-token",
+        accountId: "acct-b",
+      }),
+    });
+    stubUsageByToken({
+      "pi-access-token": new Response("unauthorized", { status: 401 }),
+    });
+
+    const [report] = await publishedCodexRows();
+    expect(report).toMatchObject({
+      state: { status: "auth_required", stale: false },
+      accountKeys: ["openai-codex"],
+    });
+  });
+
+  it("publishes the native key on a profile-only reading", async () => {
+    writeNativeAuth("native-access-token", "acct-a");
+    stubUsageByToken({
+      "native-access-token": usage(10, "a@example.invalid", "acct-a"),
+    });
+    const profileOnly: ProviderOptions = {
+      ...OPTIONS,
+      credentialMode: "profile-only",
+    };
+
+    const fresh = await publishedCodexRows(profileOnly);
+    expect(fresh.map((report) => report.accountKeys)).toEqual([["codex-home"]]);
+
+    stubUsageByToken({
+      "native-access-token": new Response("unauthorized", { status: 401 }),
+    });
+    const failed = await publishedCodexRows(profileOnly);
+    expect(failed).toMatchObject([
+      { state: { status: "auth_required" }, accountKeys: ["codex-home"] },
+    ]);
+  });
+
   it("never serves a rejected native login's cached windows for a Pi probe that failed", async () => {
     writeNativeAuth("native-access-token", "acct-a");
     stubUsageByToken({
@@ -1846,6 +1909,12 @@ async function cacheCodexRead() {
   const response = await fetchQuota(["codex"], OPTIONS);
   writeCachedProviders(response.providers);
   return response.providers;
+}
+
+async function publishedCodexRows(options: ProviderOptions = OPTIONS) {
+  vi.resetModules();
+  const { fetchQuota } = await import("../../src/commands.js");
+  return quotaJsonReport(await fetchQuota(["codex"], options), false).providers;
 }
 
 function writeNativeAuth(accessToken: string, accountId?: string): void {

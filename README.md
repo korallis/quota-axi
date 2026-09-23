@@ -394,6 +394,7 @@ The row's `accountKeys` lists every credential key folded into that lane, includ
 A key whose identity cannot be compared is left as its own lane so the uncertainty stays visible.
 
 When only the built-in Pi entry (or none) is present, Codex keeps its existing single-winner path: native `$CODEX_HOME/auth.json`, then `openai-codex`, then the CLI fallback.
+That row's `accountKeys` names the key of the credential that produced it: `codex-home` for the native login or CLI fallback, `openai-codex` for the built-in entry. A failed row names the credential it speaks for, and a stale row names the one that produced its cached snapshot. The other key is added when the native login and the built-in entry store the same `accountId`. A `--profile-only` row is always `codex-home`.
 When siblings are present and a native `$CODEX_HOME/auth.json` exists, that login stays first as its own `codex-home` lane, read from `auth.json` and then the CLI fallback.
 The built-in `openai-codex` entry whose stored `accountId` matches the native login is not a separate lane; it stays the native lane's fallback, as it was before.
 Without a native `auth.json`, an installed Codex CLI fallback is probed once as the `codex-home` lane.
@@ -410,10 +411,10 @@ A proven sign-out, or a native login that coalesces into a Pi lane with a fresh 
 
 When a provider expands to multiple accounts, the report uses quota `schemaVersion: 6` (auth and models use version 2).
 Every provider record then has an `accountKey`; providers still using one selected account use the literal `default`.
-Every schema 6 quota row also has `accountKeys`: the credential keys that one row covers, own `accountKey` first, then any keys folded into it in the order the provider recorded them.
-A consumer that holds a credential key binds the row whose `accountKeys` contains that key. Matching `accountKey` alone misses a key that was folded into another row.
-The `default` filler is `accountKeys: ["default"]`. That provider did not discover multiple accounts, so the row covers the single selected lane and no other credential key.
-Schema 5 omits `accountKeys`. Nothing expanded, the keyless row is the single selected lane, and that report stays byte-compatible.
+Every quota row, in schema 5 and schema 6 alike, has `accountKeys`: the credential keys that one row covers, own `accountKey` first, then any keys folded into it in the order the provider recorded them.
+A row covering one credential lists just its own key. A consumer that holds a credential key binds the row whose `accountKeys` contains that key. Matching `accountKey` alone misses a key that was folded into another row.
+A provider without account discovery lists `accountKeys: ["default"]`, the same literal as its schema 6 `accountKey` filler. A discovering provider that stays on one row, such as two Pi keys for one account with no native login, keeps schema 5 and no `accountKey`, and its `accountKeys` starts with that lane's key.
+Membership reflects quota-axi's own fold, which uses stored account identity when no fresh live reading confirms it. A folded key is left out only when the row's own fresh reading names a different account than the stored identity that justified the fold, unless that key's credential produced the reading.
 `accountKeys` is a quota JSON field. Auth still lists each discovered lane on its own, because a fold that depends on the quota reading has not happened there. TOON does not add a column: its flat blocks already name the published lane by `accountKey`, and the membership list is the JSON account row's join field.
 `src/providers/accounts.ts` publishes the list for every expanded lane. A lane covers only its own key unless the adapter sets `ProviderAccount.accountKeys` to the keys it folded in, including a key it learns during the read. Codex is the only adapter that discovers accounts today. Claude, Kimi, Cursor, and the other adapters do not fold lanes, and a later discoverer uses the same field. The list is not cached.
 Every flat TOON block adds `accountKey` immediately after `provider`, and the quota/exhaustion/attention join becomes **`provider` + `accountKey` + `scope`**.
