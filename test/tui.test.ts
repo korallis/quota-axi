@@ -4,8 +4,10 @@ import {
   formatCountdown,
   renderQuotaTui,
   renderTuiHintLine,
+  resolveTuiShow,
   shortWindowLabel,
   thinBar,
+  TUI_SHOW_ENV,
 } from "../src/tui.js";
 import { withQuotaSemantics } from "../src/interpretation.js";
 import { providerPresence } from "../src/lib/source-attempts.js";
@@ -886,6 +888,16 @@ describe("used-share window rows", () => {
     expect(code).not.toContain("─");
     expect(findLine(lines, "│   session")).toContain(" 70%");
     expect(findLine(lines, "│   month")).toContain(" 60%");
+
+    // A share is already a used figure, so the used view leaves it as is and
+    // flips only the windows around it.
+    const used = renderQuotaTui(
+      { generatedAt: GENERATED_AT, schemaVersion: 5, providers: [kimi] },
+      { timeZone: "America/Los_Angeles", show: "used" },
+    ).split("\n");
+    expect(findLine(used, "│   code")).toBe(code);
+    expect(findLine(used, "│   session")).toContain(" 30%");
+    expect(findLine(used, "│   month")).toContain(" 40%");
   });
 
   it("still shows ? when remaining is absent on a window that is not a share", () => {
@@ -913,6 +925,14 @@ describe("used-share window rows", () => {
     const chat = findLine(lines, "│   chat");
     expect(chat).toContain("?");
     expect(chat).not.toContain("% of");
+
+    // The used view is a display of the same remaining figure, so it does not
+    // turn an unmeasured window into a measured one either.
+    const used = renderQuotaTui(
+      { generatedAt: GENERATED_AT, schemaVersion: 5, providers: [copilot] },
+      { timeZone: "America/Los_Angeles", show: "used" },
+    ).split("\n");
+    expect(findLine(used, "│   chat")).toBe(chat);
   });
 });
 
@@ -945,6 +965,89 @@ describe("thin bars with pace markers", () => {
     expect(barText(thinBar(1, undefined, 13))).toBe("╸────────────");
     expect(barText(thinBar(99.9, undefined, 5))).toBe("━━━━╸");
     expect(barText(thinBar(0, undefined, 5))).toBe("─────");
+  });
+});
+
+describe("used display preference", () => {
+  it("keeps the canonical remaining view by default", () => {
+    expect(render({ show: "remaining" })).toEqual(render());
+  });
+
+  it("labels each headline with how much of its binding window is used", () => {
+    const lines = render({ show: "used" });
+    expect(findCardLine(lines, 0, "28% used · week")).toContain("on pace ✓");
+    expect(findCardLine(lines, 1, "95% used · week")).toContain(
+      "empty in 7h 21m",
+    );
+    expect(findLine(lines, "55% used · credits")).toContain("empty in 2d 13h");
+    expect(lines.join("\n")).not.toContain("72% week");
+  });
+
+  it("prints each window row as the complement of its remaining figure", () => {
+    const lines = render({ show: "used" });
+    expect(findCardLine(lines, 0, "│   session")).toContain("  3%");
+    expect(findCardLine(lines, 0, "│   week")).toContain(" 28%");
+    expect(findCardLine(lines, 0, "│   fable")).toContain(" 15%");
+    expect(findCardLine(lines, 1, "│   week")).toContain(" 95%");
+    expect(findCardLine(lines, 1, "│   spark")).toContain("  0%");
+  });
+
+  it("sums both views of a rounded reading to 100%", () => {
+    const response = fixtureResponse();
+    const session = response.providers[0].windows[0];
+    session.percentUsed = 48.5;
+    session.percentRemaining = 51.5;
+    const row = (show: "remaining" | "used"): string =>
+      findCardLine(
+        renderQuotaTui(response, {
+          timeZone: "America/Los_Angeles",
+          show,
+        }).split("\n"),
+        0,
+        "│   session",
+      );
+    expect(row("remaining")).toContain(" 52%");
+    expect(row("used")).toContain(" 48%");
+  });
+
+  it("mirrors the bar fill and pace marker onto the used side", () => {
+    expect(barText(thinBar(97, 92.9, 13, "used"))).toBe("╸┃───────────");
+    expect(barText(thinBar(5, 16.8, 13, "used"))).toBe("━━━━━━━━━━━┃╸");
+    expect(barText(thinBar(100, 100, 13, "used"))).toBe("┃────────────");
+    expect(barText(thinBar(85, 70, 13, "used"))).toBe("━━──┃────────");
+    expect(barText(thinBar(undefined, undefined, 13, "used"))).toBe(
+      "─────────────",
+    );
+  });
+
+  it("keeps coloring the fill by headroom", () => {
+    expect(thinBar(5, 16.8, 13, "used")[0]?.style).toBe("crit");
+    expect(thinBar(45, undefined, 10, "used")[0]?.style).toBe("warn");
+    expect(thinBar(97, undefined, 10, "used")[0]?.style).toBe("ok");
+  });
+
+  it("changes only the percentages, bars, and headline direction", () => {
+    const remaining = render();
+    const used = render({ show: "used" });
+    expect(used).toHaveLength(remaining.length);
+    const neutral = (line: string): string =>
+      line
+        .replace(/\d+%( used ·)?/g, "N%")
+        .replace(/[━╸┃─]{8,}/g, (bar) => "=".repeat(bar.length))
+        .replace(/ +/g, " ");
+    expect(used.map(neutral)).toEqual(remaining.map(neutral));
+    for (const line of used)
+      expect(displayColumns(line)).toBeLessThanOrEqual(100);
+  });
+
+  it("reads the preference from the environment and rejects anything else", () => {
+    expect(resolveTuiShow({})).toBe("remaining");
+    expect(resolveTuiShow({ [TUI_SHOW_ENV]: "  " })).toBe("remaining");
+    expect(resolveTuiShow({ [TUI_SHOW_ENV]: "remaining" })).toBe("remaining");
+    expect(resolveTuiShow({ [TUI_SHOW_ENV]: " Used " })).toBe("used");
+    expect(() => resolveTuiShow({ [TUI_SHOW_ENV]: "left" })).toThrow(
+      "QUOTA_AXI_TUI_SHOW must be remaining or used",
+    );
   });
 });
 

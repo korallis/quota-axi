@@ -23,6 +23,7 @@ import {
   detectTuiColorDepth,
   renderQuotaTui,
   renderTuiHintLine,
+  resolveTuiShow,
   type TuiColorDepth,
 } from "./tui.js";
 import { scrollHint } from "./tui-viewport.js";
@@ -76,6 +77,9 @@ async function quotaTuiReport(
   flags: QuotaFlags,
   options: ProviderOptions,
 ): Promise<string> {
+  // A human display preference, so it is read only on this path: TOON and
+  // JSON never see it, and a bad value fails before any quota is read.
+  const show = resolveTuiShow(process.env);
   const terminal = (): { columns?: number; colorDepth: TuiColorDepth } => ({
     ...(process.stdout.columns === undefined
       ? {}
@@ -98,6 +102,7 @@ async function quotaTuiReport(
       full: flags.full,
       presence,
       showNotSetUp,
+      show,
     });
   };
 
