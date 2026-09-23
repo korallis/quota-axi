@@ -37,6 +37,7 @@ const originalMimoProvider = PROVIDERS.mimo;
 const originalDeepSeekProvider = PROVIDERS.deepseek;
 const originalOpenRouterProvider = PROVIDERS.openrouter;
 const originalElevenLabsProvider = PROVIDERS.elevenlabs;
+const originalDevinProvider = PROVIDERS.devin;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
 const originalCodexHome = process.env.CODEX_HOME;
@@ -65,6 +66,7 @@ afterEach(() => {
   PROVIDERS.deepseek = originalDeepSeekProvider;
   PROVIDERS.openrouter = originalOpenRouterProvider;
   PROVIDERS.elevenlabs = originalElevenLabsProvider;
+  PROVIDERS.devin = originalDevinProvider;
   vi.unstubAllGlobals();
   if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
@@ -101,6 +103,7 @@ describe("CLI flag parsing", () => {
       "deepseek",
       "openrouter",
       "elevenlabs",
+      "devin",
     ]);
   });
 
@@ -144,6 +147,7 @@ describe("CLI flag parsing", () => {
           "deepseek",
           "openrouter",
           "elevenlabs",
+          "devin",
         ],
         json: true,
         full: true,
@@ -1390,12 +1394,12 @@ describe("human report folding for providers that are not set up", () => {
 
     expect(output.trimEnd().split("\n").slice(-3)).toEqual([
       "  ○ not set up  cursor · copilot · grok · kimi · zai · agy · alibaba · opencode-go · commandcode",
-      "                minimax · mimo · deepseek · openrouter · elevenlabs",
+      "                minimax · mimo · deepseek · openrouter · elevenlabs · devin",
       "                quota-axi auth shows where each is read",
     ]);
     expect(output).not.toMatch(/╭─ ○ (agy|alibaba|commandcode) /);
 
-    expect(output).toMatch(/· 1 live · 1 needs attention · 14 not set up\n/);
+    expect(output).toMatch(/· 1 live · 1 needs attention · 15 not set up\n/);
     expect(output).toContain("╭─ ● codex ");
     expect(output).toContain("╭─ ○ claude ");
     expect(output).toContain("  ○ not set up  cursor · copilot · grok · kimi");
@@ -1407,7 +1411,7 @@ describe("human report folding for providers that are not set up", () => {
     stubFoldFleet();
     const output = await capture(["--tui", "--once", "--all"]);
 
-    expect(output).toContain("  ○ not set up · 14\n");
+    expect(output).toContain("  ○ not set up · 15\n");
     expect(output).toContain("╭─ ○ copilot ");
     expect(output).toContain("╭─ ○ elevenlabs ");
     expect(output).not.toContain("quota-axi auth shows where each is read");
@@ -1468,7 +1472,7 @@ describe("human report folding for providers that are not set up", () => {
 
       process.stdin.emit("data", Buffer.from("a"));
       await settle("a hide not set up");
-      expect(lastFrame()).toContain("  ○ not set up · 14");
+      expect(lastFrame()).toContain("  ○ not set up · 15");
       expect(lastFrame()).toContain("╭─ ○ zai ");
 
       process.stdin.emit("data", Buffer.from("q"));
@@ -1774,6 +1778,64 @@ describe("new provider public quota output", () => {
     );
     expect(process.exitCode).toBe(1);
   });
+
+  it("publishes Devin included quota in TOON and JSON without the session token", async () => {
+    useTempCache();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-22T12:00:00.000Z"));
+    const key = "synthetic-devin-cli-key";
+    process.env.WINDSURF_API_KEY = key;
+    const payload = JSON.parse(
+      readFileSync("test/fixtures/devin/pro.json", "utf8"),
+    ) as unknown;
+    const fetch = vi.fn(async () => {
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    try {
+      const toon = await capture(["--provider", "devin"]);
+      expect(toonRows(toon, "quota").map((row) => row.slice(0, 3))).toEqual([
+        ["devin", "included_quota", "60"],
+      ]);
+      expect(toon).not.toContain(key);
+      expect(toon).not.toContain("person@example.invalid");
+
+      const json = JSON.parse(
+        await capture(["--provider", "devin", "--json"]),
+      ) as QuotaAxiResponse;
+      expect(json.providers[0]).toMatchObject({
+        provider: "devin",
+        credits: { remaining: 2.5, unit: "usd" },
+      });
+      expect(json.providers[0]?.account).toBeUndefined();
+      expect(json.providers[0]?.windows.map((window) => window.id)).toEqual([
+        "weekly",
+        "daily",
+      ]);
+      expect(JSON.stringify(json)).not.toContain(key);
+
+      const full = JSON.parse(
+        await capture(["--provider", "devin", "--json", "--full"]),
+      ) as QuotaAxiResponse;
+      expect(full.providers[0]?.account).toEqual({
+        email: "person@example.invalid",
+        accountId: "fixture-user",
+      });
+      expect(
+        full.providers[0]?.quotaSemantics?.effectiveAvailability[0],
+      ).toMatchObject({
+        scope: "included_quota",
+        effectivePercentRemaining: 60,
+        boundedBy: ["weekly", "daily"],
+      });
+    } finally {
+      delete process.env.WINDSURF_API_KEY;
+    }
+  });
 });
 
 describe("default TOON decision blocks", () => {
@@ -1804,6 +1866,7 @@ describe("default TOON decision blocks", () => {
       emptyFreshQuota("openrouter", "OpenRouter"),
     );
     PROVIDERS.elevenlabs = providerWithQuota(freshElevenLabsQuota());
+    PROVIDERS.devin = providerWithQuota(freshDevinQuota());
 
     const output = await capture([]);
     const named = new Set([
@@ -1820,6 +1883,7 @@ describe("default TOON decision blocks", () => {
       "copilot",
       "cursor",
       "deepseek",
+      "devin",
       "elevenlabs",
       "grok",
       "kimi",
@@ -3089,6 +3153,34 @@ function freshCommandCodeQuota(): ProviderQuota {
       stale: false,
       refreshedAt: "2026-07-06T18:10:00Z",
       sourcesTried: ["pi:commandcode"],
+    },
+  };
+}
+
+function freshDevinQuota(): ProviderQuota {
+  return {
+    provider: "devin",
+    label: "Devin",
+    source: "api",
+    plan: "max",
+    windows: [
+      {
+        id: "weekly",
+        label: "week",
+        kind: "weekly",
+        percentUsed: 20,
+        percentRemaining: 80,
+        windowSeconds: 604_800,
+        startsAt: "2026-09-20T08:00:00.000Z",
+        resetsAt: "2026-09-27T08:00:00.000Z",
+      },
+    ],
+    state: {
+      status: "fresh",
+      stale: false,
+      authStatus: "usable",
+      refreshedAt: "2026-09-22T12:00:00.000Z",
+      sourcesTried: ["env:WINDSURF_API_KEY"],
     },
   };
 }
