@@ -990,22 +990,28 @@ describe("used display preference", () => {
     expect(findCardLine(lines, 1, "│   spark")).toContain("  0%");
   });
 
-  it("sums both views of a rounded reading to 100%", () => {
+  it("rounds raw consumption independently of remaining in the headline and row", () => {
     const response = fixtureResponse();
-    const session = response.providers[0].windows[0];
+    const claude = response.providers[0];
+    const session = claude.windows[0];
     session.percentUsed = 48.5;
     session.percentRemaining = 51.5;
-    const row = (show: "remaining" | "used"): string =>
-      findCardLine(
-        renderQuotaTui(response, {
-          timeZone: "America/Los_Angeles",
-          show,
-        }).split("\n"),
-        0,
-        "│   session",
-      );
-    expect(row("remaining")).toContain(" 52%");
-    expect(row("used")).toContain(" 48%");
+    const availability = claude.quotaSemantics?.effectiveAvailability[0];
+    expect(availability).toBeDefined();
+    if (!availability) return;
+    availability.effectivePercentRemaining = 51.5;
+    availability.limitingWindowIds = [session.id];
+    const lines = (show: "remaining" | "used"): string[] =>
+      renderQuotaTui(response, {
+        timeZone: "America/Los_Angeles",
+        show,
+      }).split("\n");
+    expect(findCardLine(lines("remaining"), 0, "52% session")).toBeDefined();
+    expect(findCardLine(lines("remaining"), 0, "│   session")).toContain(
+      " 52%",
+    );
+    expect(findCardLine(lines("used"), 0, "49% used · session")).toBeDefined();
+    expect(findCardLine(lines("used"), 0, "│   session")).toContain(" 49%");
   });
 
   it("mirrors the bar fill and pace marker onto the used side", () => {

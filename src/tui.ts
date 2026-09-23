@@ -648,7 +648,10 @@ function windowRow(
     ...thinBar(pct, marker, WINDOW_BAR_WIDTH, show),
     { text: " " },
     {
-      text: (pct === undefined ? "?" : shownPercent(pct, show)).padStart(4),
+      text: (pct === undefined
+        ? "?"
+        : shownPercent(pct, show, window.percentUsed)
+      ).padStart(4),
       style: pct === undefined ? "dim" : healthStyle(pct),
     },
     { text: "  " },
@@ -694,14 +697,15 @@ function shareCaption(window: QuotaWindow, windows: QuotaWindow[]): string {
 }
 
 /**
- * The percentage a row or headline prints for a remaining figure. The used
- * view is the exact complement of the rounded remaining figure, so the two
- * views of one reading always sum to 100% and the headline still equals its
- * limiting window's row.
+ * The percentage a row or headline prints. A window uses its raw consumed
+ * figure; an effective headline derives consumption from raw remaining.
  */
-function shownPercent(percentRemaining: number, show: TuiShow): string {
-  const remaining = Math.round(percentRemaining);
-  return `${show === "used" ? 100 - remaining : remaining}%`;
+function shownPercent(
+  percentRemaining: number,
+  show: TuiShow,
+  percentUsed = 100 - percentRemaining,
+): string {
+  return `${Math.round(show === "used" ? percentUsed : percentRemaining)}%`;
 }
 
 /**
