@@ -561,18 +561,18 @@ describe("credential source contract", { timeout: 30_000 }, () => {
     });
 
     it.each([
-      ["a blank value", "   "],
-      ["an environment reference", "$WINDSURF_API_KEY"],
-      ["a command reference", "!op read op://vault/key"],
-      ["a control byte", "devin-\u0007-fixture"],
-    ])("never sends %s", async (_label, value) => {
+      ["a blank value", "   ", "auth_required"],
+      ["an environment reference", "$WINDSURF_API_KEY", "error"],
+      ["a command reference", "!op read op://vault/key", "error"],
+      ["a control byte", "devin-\u0007-fixture", "error"],
+    ])("never sends %s", async (_label, value, status) => {
       process.env.WINDSURF_API_KEY = value;
       const api = stubRejectingApiKey();
 
       const result = await readQuota("devin");
 
       expect(api.keys).toEqual([]);
-      expect(result.state.status).toBe("auth_required");
+      expect(result.state.status).toBe(status);
     });
 
     it("marks a present but unusable variable as a credential that exists", async () => {

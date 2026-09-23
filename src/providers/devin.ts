@@ -55,6 +55,12 @@ const DAY_SECONDS = 86_400;
 const WEEK_SECONDS = 604_800;
 const USER_AGENT = `quota-axi/${VERSION}`;
 const QUOTA_BILLING = "BILLING_STRATEGY_QUOTA";
+const QUOTA_FIELDS = [
+  "weeklyQuotaRemainingPercent",
+  "weeklyQuotaResetAtUnix",
+  "dailyQuotaRemainingPercent",
+  "dailyQuotaResetAtUnix",
+];
 const SIGN_IN_REMEDY = "devin auth login";
 
 /**
@@ -331,10 +337,7 @@ async function acquireDevinQuota(
         // A present but unusable value is the identity the vendor would use.
         // Falling through would report a different account.
         return failureReport(
-          new DevinFailure(resolution.error, {
-            status: "auth_required",
-            definitiveAuth: true,
-          }),
+          new DevinFailure(resolution.error),
           undefined,
           attempts,
           dependencies,
@@ -735,12 +738,13 @@ function rejectHttpFailure(response: Response, receivedAt: number): void {
  * published window-kind enum stays unchanged; `windowSeconds` carries the
  * vendor's 86,400s day. `planInfo.hideDailyQuota` omits that window, because
  * Max has no daily cap and a figure the vendor hides must not bound anything.
- * Otherwise the daily cap binds, so a weekly reading whose daily figure is
- * missing or belongs to a finished cycle names `daily` as untrusted.
+ * Every other expected window whose figure is missing or belongs to a finished
+ * cycle is named as untrusted, and a body carrying quota fields without a
+ * billing strategy, or with no usable expected window, is `schema_incomplete`.
  *
  * Remaining percents are the vendor's own `*_quota_remaining_percent`. Proto3
  * JSON omits zero-valued scalars, so a missing percent whose reset is present
- * is 0 remaining. A missing percent and a missing reset omit the window.
+ * is 0 remaining.
  */
 export function normalizeDevinPayload(
   payload: unknown,
@@ -797,36 +801,49 @@ export function normalizeDevinPayload(
   const credits = planStatus ? creditsFromMicros(planStatus) : undefined;
   const untrustedWindowIds: string[] = [];
   const windows: QuotaWindow[] = [];
-  const quotaBilling = planInfo?.billingStrategy === QUOTA_BILLING;
-  if (quotaBilling && planStatus) {
-    const hideDaily = planInfo?.hideDailyQuota === true;
-    const weekly = normalizeQuotaWindow(
-      planStatus,
-      "weekly",
-      "week",
-      "weekly",
-      WEEK_SECONDS,
-      "weeklyQuotaRemainingPercent",
-      "weeklyQuotaResetAtUnix",
-      now,
-    );
-    if (weekly.untrusted) untrustedWindowIds.push("weekly");
-    if (weekly.window) windows.push(weekly.window);
-    if (!hideDaily) {
-      const daily = normalizeQuotaWindow(
-        planStatus,
+  const quotaFields =
+    planStatus !== undefined &&
+    QUOTA_FIELDS.some((key) => Object.hasOwn(planStatus, key));
+  if (quotaFields && planInfo?.billingStrategy === undefined) {
+    throw new DevinFailure("schema_incomplete", { staleEligible: true });
+  }
+  if (quotaFields && planInfo?.billingStrategy === QUOTA_BILLING) {
+    const expected: [string, QuotaWindow | undefined][] = [
+      [
+        "weekly",
+        normalizeQuotaWindow(
+          planStatus,
+          "weekly",
+          "week",
+          "weekly",
+          WEEK_SECONDS,
+          "weeklyQuotaRemainingPercent",
+          "weeklyQuotaResetAtUnix",
+          now,
+        ),
+      ],
+    ];
+    if (planInfo.hideDailyQuota !== true) {
+      expected.push([
         "daily",
-        "day",
-        "session",
-        DAY_SECONDS,
-        "dailyQuotaRemainingPercent",
-        "dailyQuotaResetAtUnix",
-        now,
-      );
-      if (daily.untrusted || (!daily.window && weekly.window)) {
-        untrustedWindowIds.push("daily");
-      }
-      if (daily.window) windows.push(daily.window);
+        normalizeQuotaWindow(
+          planStatus,
+          "daily",
+          "day",
+          "session",
+          DAY_SECONDS,
+          "dailyQuotaRemainingPercent",
+          "dailyQuotaResetAtUnix",
+          now,
+        ),
+      ]);
+    }
+    for (const [id, window] of expected) {
+      if (window) windows.push(window);
+      if (window?.percentRemaining === undefined) untrustedWindowIds.push(id);
+    }
+    if (windows.length === 0) {
+      throw new DevinFailure("schema_incomplete", { staleEligible: true });
     }
   }
 
@@ -848,10 +865,10 @@ function normalizeQuotaWindow(
   percentKey: string,
   resetKey: string,
   now: number,
-): { window?: QuotaWindow; untrusted: boolean } {
+): QuotaWindow | undefined {
   const hasPercent = Object.hasOwn(planStatus, percentKey);
   const hasReset = Object.hasOwn(planStatus, resetKey);
-  if (!hasPercent && !hasReset) return { untrusted: false };
+  if (!hasPercent && !hasReset) return undefined;
 
   const percent = hasPercent
     ? integerPercent(planStatus[percentKey])
@@ -860,30 +877,24 @@ function normalizeQuotaWindow(
     ? parseUnixSeconds(planStatus[resetKey])
     : undefined;
   // A reset the vendor says has already passed belongs to a finished cycle.
-  if (resetsAt && Date.parse(resetsAt) <= now) return { untrusted: false };
+  if (resetsAt && Date.parse(resetsAt) <= now) return undefined;
   if (hasPercent && percent === undefined) {
-    return {
-      untrusted: true,
-      window: windowWithoutPercent(id, label, kind, windowSeconds, resetsAt),
-    };
+    return windowWithoutPercent(id, label, kind, windowSeconds, resetsAt);
   }
-  if (!hasPercent && !resetsAt) return { untrusted: true };
+  if (!hasPercent && !resetsAt) return undefined;
   const percentRemaining = percent ?? 0;
   const startsAt = resetsAt
     ? new Date(Date.parse(resetsAt) - windowSeconds * 1000).toISOString()
     : undefined;
   return {
-    untrusted: false,
-    window: {
-      id,
-      label,
-      kind,
-      percentRemaining,
-      percentUsed: 100 - percentRemaining,
-      windowSeconds,
-      ...(startsAt ? { startsAt } : {}),
-      ...(resetsAt ? { resetsAt } : {}),
-    },
+    id,
+    label,
+    kind,
+    percentRemaining,
+    percentUsed: 100 - percentRemaining,
+    windowSeconds,
+    ...(startsAt ? { startsAt } : {}),
+    ...(resetsAt ? { resetsAt } : {}),
   };
 }
 

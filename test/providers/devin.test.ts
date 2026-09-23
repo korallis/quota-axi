@@ -70,6 +70,11 @@ const OUT_OF_RANGE = fixture("out-of-range");
 const NON_QUOTA = fixture("non-quota");
 const NO_QUOTA = fixture("no-quota");
 
+type DevinTestPayload = {
+  userStatus: { planStatus: Record<string, unknown> };
+  planInfo: Record<string, unknown>;
+};
+
 let tempDir: string | undefined;
 
 afterEach(() => {
@@ -249,6 +254,33 @@ describe("Devin credential matrix", () => {
     );
   });
 
+  it("names a missing weekly cap as untrusted even when daily is readable", () => {
+    const payload = structuredClone(PRO) as {
+      userStatus: { planStatus: Record<string, unknown> };
+    };
+    delete payload.userStatus.planStatus.weeklyQuotaRemainingPercent;
+    delete payload.userStatus.planStatus.weeklyQuotaResetAtUnix;
+    const normalized = normalizeDevinPayload(payload, NOW);
+    expect(normalized.windows.map((w) => w.id)).toEqual(["daily"]);
+    expect(normalized.untrustedWindowIds).toEqual(["weekly"]);
+    expect(interpretNormalized(normalized).quotaSemantics).toMatchObject({
+      status: "partial",
+      unresolvedWindowIds: ["weekly"],
+    });
+  });
+
+  it("lets a daily figure bind when the vendor does not hide it", () => {
+    const payload = structuredClone(MAX) as {
+      planInfo: Record<string, unknown>;
+    };
+    delete payload.planInfo.hideDailyQuota;
+    const normalized = normalizeDevinPayload(payload, NOW);
+    expect(normalized.untrustedWindowIds).toEqual([]);
+    expect(
+      interpretNormalized(normalized).quotaSemantics?.effectiveAvailability[0],
+    ).toMatchObject({ effectivePercentRemaining: 10 });
+  });
+
   it("rejects a hideDailyQuota that is not a boolean", () => {
     const payload = structuredClone(MAX) as {
       planInfo: Record<string, unknown>;
@@ -291,6 +323,45 @@ describe("Devin credential matrix", () => {
     expect(normalized.credits).toEqual({ remaining: 5, unit: "usd" });
     expect(JSON.stringify(normalized)).not.toContain("acuConsumed");
     expect(JSON.stringify(normalized)).not.toContain("acuLimit");
+  });
+
+  it.each([
+    [
+      "quota fields without a billing strategy",
+      (payload: DevinTestPayload) => {
+        delete payload.planInfo.billingStrategy;
+      },
+    ],
+    [
+      "every expected cap from a finished cycle",
+      (payload: DevinTestPayload) => {
+        const elapsed = String(Date.parse("2026-09-22T08:00:00.000Z") / 1000);
+        payload.userStatus.planStatus.dailyQuotaResetAtUnix = elapsed;
+        payload.userStatus.planStatus.weeklyQuotaResetAtUnix = elapsed;
+      },
+    ],
+  ])("preserves the cache on %s", async (_label, mutate) => {
+    const deleted: string[] = [];
+    const contextId = devinCacheContextId(
+      DEVIN_ENV_SOURCE,
+      DEVIN_API_ORIGIN,
+      SYNTHETIC_KEY,
+    );
+    const payload = structuredClone(PRO) as DevinTestPayload;
+    mutate(payload);
+    const report = await testAdapter({
+      fetch: sequentialFetch([jsonResponse(payload)]),
+      deleteCachedProvider: (provider) => deleted.push(provider),
+      readCachedProvider: (id) =>
+        id === contextId ? cachedQuota() : undefined,
+    }).fetchQuota(OPTIONS);
+
+    expect(deleted).toEqual([]);
+    expect(report.state).toMatchObject({
+      status: "stale",
+      error: "schema_incomplete",
+    });
+    expect(report.windows[0]?.percentRemaining).toBe(90);
   });
 
   it("reports an authenticated body with no quota fields as fresh and empty", async () => {
@@ -355,11 +426,11 @@ describe("Devin credential matrix", () => {
 
     expect(request).not.toHaveBeenCalled();
     expect(report.state).toMatchObject({
-      status: "auth_required",
+      status: "error",
       error: "devin_credential_invalid",
-      authStatus: "unusable",
-      remedyCommand: "devin auth login",
     });
+    expect(report.state.authStatus).toBeUndefined();
+    expect(report.state.remedyCommand).toBeUndefined();
     expect(report.attempts).toEqual([
       {
         source: DEVIN_ENV_SOURCE,
@@ -576,7 +647,8 @@ describe("Devin credential matrix", () => {
       sources: [createDevinEnvSource({ WINDSURF_API_KEY: value })],
     }).fetchQuota(OPTIONS);
     expect(request).not.toHaveBeenCalled();
-    expect(report.state.status).toBe("auth_required");
+    expect(report.state.status).toBe("error");
+    expect(report.state.remedyCommand).toBeUndefined();
     expect(report.attempts?.[0].credentialPresent).toBe(true);
   });
 });
