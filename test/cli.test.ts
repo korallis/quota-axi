@@ -1935,11 +1935,11 @@ describe("default TOON decision blocks", () => {
 
     expect(namedProviders(output)).toEqual(stayed);
     expect(output).toContain(
-      "10 providers not set up are omitted; run `quota-axi --full` to list them",
+      `${Object.keys(PROVIDERS).length - stayed.length} providers not set up are omitted; run \`quota-axi --full\` to list them`,
     );
     expect(output).toContain("degraded_source");
     const keychainAt = output.indexOf("Tell your user:");
-    const omittedAt = output.indexOf("10 providers not set up are omitted");
+    const omittedAt = output.indexOf("providers not set up are omitted");
     const tierAt = output.indexOf(
       "Run `quota-axi --full` for windows, pace, reserve, and account evidence",
     );
@@ -2061,7 +2061,7 @@ describe("default TOON decision blocks", () => {
     expect(output).toContain("openai-codex-work");
     expect(namedProviders(output)).toEqual(["codex"]);
     expect(output).toContain(
-      "15 providers not set up are omitted; run `quota-axi --full` to list them",
+      `${Object.keys(PROVIDERS).length - 1} providers not set up are omitted; run \`quota-axi --full\` to list them`,
     );
     expect(process.exitCode).toBeUndefined();
 
