@@ -1,0 +1,176 @@
+[
+  {
+    "scenario": "native-fold",
+    "exit": 0,
+    "schemaVersion": 6,
+    "rows": [
+      {
+        "accountKey": "codex-home",
+        "accountKeys": [
+          "codex-home",
+          "openai-codex"
+        ],
+        "source": null,
+        "status": "fresh",
+        "percentUsed": null
+      },
+      {
+        "accountKey": "openai-codex-work",
+        "accountKeys": [
+          "openai-codex-work"
+        ],
+        "source": null,
+        "status": "fresh",
+        "percentUsed": null
+      }
+    ]
+  },
+  {
+    "scenario": "pi-fold",
+    "exit": 0,
+    "schemaVersion": 5,
+    "rows": [
+      {
+        "accountKey": null,
+        "accountKeys": [
+          "openai-codex",
+          "openai-codex-work"
+        ],
+        "source": null,
+        "status": "fresh",
+        "percentUsed": null
+      }
+    ]
+  },
+  {
+    "scenario": "native-to-sibling",
+    "exit": 0,
+    "schemaVersion": 6,
+    "rows": [
+      {
+        "accountKey": "openai-codex-work",
+        "accountKeys": [
+          "openai-codex-work",
+          "codex-home"
+        ],
+        "status": "fresh",
+        "percentRemaining": 20
+      }
+    ]
+  },
+  {
+    "scenario": "stale-pi",
+    "exit": 0,
+    "schemaVersion": 5,
+    "rows": [
+      {
+        "accountKey": null,
+        "accountKeys": [
+          "openai-codex"
+        ],
+        "source": null,
+        "status": "fresh",
+        "percentUsed": null
+      }
+    ]
+  },
+  {
+    "scenario": "stale-pi",
+    "exit": 0,
+    "schemaVersion": 5,
+    "rows": [
+      {
+        "accountKey": null,
+        "accountKeys": [
+          "openai-codex"
+        ],
+        "source": null,
+        "status": "stale",
+        "percentUsed": null
+      }
+    ]
+  },
+  {
+    "scenario": "malformed-pi",
+    "exit": 1,
+    "schemaVersion": 5,
+    "rows": [
+      {
+        "accountKey": null,
+        "accountKeys": [
+          "openai-codex"
+        ],
+        "source": null,
+        "status": "auth_required",
+        "percentUsed": null
+      }
+    ]
+  },
+  {
+    "scenario": "profile-native",
+    "exit": 0,
+    "schemaVersion": 5,
+    "rows": [
+      {
+        "accountKey": null,
+        "accountKeys": [
+          "codex-home"
+        ],
+        "source": null,
+        "status": "fresh",
+        "percentUsed": null
+      }
+    ]
+  },
+  {
+    "scenario": "rejected-pi",
+    "exit": 1,
+    "schemaVersion": 5,
+    "rows": [
+      {
+        "accountKey": null,
+        "accountKeys": [
+          "openai-codex"
+        ],
+        "source": null,
+        "status": "auth_required",
+        "percentUsed": null
+      }
+    ]
+  },
+  {
+    "scenario": "contradiction",
+    "exit": 0,
+    "schemaVersion": 6,
+    "rows": [
+      {
+        "accountKey": "openai-codex-work",
+        "accountKeys": [
+          "openai-codex-work",
+          "codex-home",
+          "openai-codex"
+        ],
+        "status": "fresh",
+        "percentRemaining": 20
+      }
+    ]
+  },
+  {
+    "scenario": "nonfold-deepseek",
+    "exit": 0,
+    "schemaVersion": 5,
+    "rows": [
+      {
+        "provider": "deepseek",
+        "accountKeys": [
+          "default"
+        ],
+        "status": "fresh",
+        "credits": {
+          "remaining": 9.5,
+          "unit": "usd"
+        }
+      }
+    ]
+  }
+]
