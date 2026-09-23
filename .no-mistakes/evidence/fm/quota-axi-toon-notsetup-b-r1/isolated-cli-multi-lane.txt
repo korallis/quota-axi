@@ -1,0 +1,31 @@
+$ quota-axi --no-credential-refresh (synthetic Pi entries, exit 1)
+bin: /Users/kunchen/.no-mistakes/worktrees/1c5c6552f798/01M36D9K7M3KFN6EFD1ZNZFWRG/dist/bin/quota-axi.js
+description: Report local agent-provider quota windows for routing-aware agents
+quota[0]:
+exhaustion[0]:
+attention[2]{provider,accountKey,scope,kind,detail,remedy}:
+  codex,openai-codex,all,auth_required,Codex sign-in required,none
+  codex,openai-codex-work,all,auth_required,Codex sign-in required,none
+help[2]:
+  16 providers not set up are omitted; run `quota-axi --full` to list them
+  Run `quota-axi --full` for windows, pace, reserve, and account evidence
+
+$ quota-axi --json --no-credential-refresh (schema 6 excerpt, exit 1)
+{
+  "schemaVersion": 6,
+  "providers": [
+    {
+      "provider": "codex",
+      "accountKey": "openai-codex",
+      "status": "auth_required",
+      "notSetUp": null
+    },
+    {
+      "provider": "codex",
+      "accountKey": "openai-codex-work",
+      "status": "auth_required",
+      "notSetUp": null
+    }
+  ],
+  "absentLaneCount": 16
+}

@@ -1,0 +1,132 @@
+$ quota-axi default --no-credential-refresh (exit 1)
+bin: /Users/kunchen/.no-mistakes/worktrees/1c5c6552f798/01M36D9K7M3KFN6EFD1ZNZFWRG/dist/bin/quota-axi.js
+description: Report local agent-provider quota windows for routing-aware agents
+quota[0]:
+exhaustion[0]:
+attention[1]{provider,scope,kind,detail,remedy}:
+  codex,all,auth_required,Codex sign-in required,none
+help[2]:
+  16 providers not set up are omitted; run `quota-axi --full` to list them
+  Run `quota-axi --full` for windows, pace, reserve, and account evidence
+
+$ quota-axi full --no-credential-refresh (exit 1)
+bin: /Users/kunchen/.no-mistakes/worktrees/1c5c6552f798/01M36D9K7M3KFN6EFD1ZNZFWRG/dist/bin/quota-axi.js
+description: Report local agent-provider quota windows for routing-aware agents
+quota[0]:
+exhaustion[0]:
+attention[17]{provider,scope,kind,detail,remedy}:
+  claude,all,auth_required,credentials_missing,none
+  codex,all,auth_required,Codex sign-in required,none
+  cursor,all,auth_required,Cursor sign-in required,none
+  copilot,all,auth_required,GitHub Copilot sign-in required,none
+  grok,all,auth_required,Grok sign-in required (auth unusable),none
+  kimi,all,auth_required,kimi_credential_unavailable,none
+  zai,all,auth_required,zai_credential_unavailable,none
+  agy,all,unavailable,Antigravity/agy is not running,none
+  alibaba,all,unavailable,bl_cli_unavailable,none
+  opencode-go,all,auth_required,opencode_go_credential_unavailable,none
+  commandcode,all,auth_required,commandcode_sign_in_required (auth unusable),none
+  minimax,all,auth_required,minimax_credential_unavailable,none
+  mimo,all,auth_required,mimo_credential_unavailable,none
+  deepseek,all,auth_required,deepseek_credential_unavailable,none
+  openrouter,all,auth_required,openrouter_credential_unavailable,none
+  elevenlabs,all,auth_required,elevenlabs_credential_unavailable (auth unusable),none
+  devin,all,auth_required,devin_credential_unavailable (auth unusable),devin auth login
+providers[17]{provider,plan,source,status,authStatus,relationships,refreshedAt}:
+  claude,unknown,unavailable,auth_required,unknown,unknown,none
+  codex,unknown,unavailable,auth_required,unknown,unknown,none
+  cursor,unknown,unavailable,auth_required,unknown,unknown,none
+  copilot,unknown,unavailable,auth_required,unknown,unknown,none
+  grok,unknown,unavailable,auth_required,unusable,unknown,none
+  kimi,unknown,unavailable,auth_required,unknown,unknown,none
+  zai,unknown,unavailable,auth_required,unknown,unknown,none
+  agy,unknown,unavailable,unavailable,unknown,unknown,none
+  alibaba,unknown,unavailable,unavailable,unknown,unknown,none
+  opencode-go,unknown,api,auth_required,unknown,unknown,none
+  commandcode,unknown,unavailable,auth_required,unusable,unknown,none
+  minimax,unknown,unavailable,auth_required,unknown,unknown,none
+  mimo,unknown,unavailable,auth_required,unknown,unknown,none
+  deepseek,unknown,unavailable,auth_required,unknown,unknown,none
+  openrouter,unknown,unavailable,auth_required,unknown,unknown,none
+  elevenlabs,unknown,unavailable,auth_required,unusable,unknown,none
+  devin,unknown,unavailable,auth_required,unusable,unknown,none
+windows[0]:
+scopeAudit[0]:
+accounts[17]{provider,email,organization,accountId,identityStatus}:
+  claude,hidden,none,none,unknown
+  codex,hidden,none,none,unknown
+  cursor,hidden,none,none,unknown
+  copilot,hidden,none,none,unknown
+  grok,hidden,none,none,unknown
+  kimi,hidden,none,none,unknown
+  zai,hidden,none,none,unknown
+  agy,hidden,none,none,unknown
+  alibaba,hidden,none,none,unknown
+  opencode-go,hidden,none,none,unknown
+  commandcode,hidden,none,none,unknown
+  minimax,hidden,none,none,unknown
+  mimo,hidden,none,none,unknown
+  deepseek,hidden,none,none,unknown
+  openrouter,hidden,none,none,unknown
+  elevenlabs,hidden,none,none,unknown
+  devin,hidden,none,none,unknown
+attempts[36]{provider,source,status,error}:
+  claude,oauth-file,skipped,credentials_missing
+  claude,keychain,skipped,credentials_missing
+  codex,oauth,skipped,credentials_missing
+  codex,"pi:openai-codex",skipped,credentials_missing
+  codex,cli-rpc,failed,Codex quota unavailable
+  cursor,state-vscdb,skipped,credentials_missing
+  cursor,cli-keychain,skipped,credentials_missing
+  copilot,apps-json,skipped,credentials_missing
+  copilot,"copilot-cli:keychain",skipped,credentials_missing
+  copilot,"gh:hosts.yml",skipped,credentials_missing
+  grok,auth-json,skipped,credentials_missing
+  grok,"pi:xai",skipped,credentials_missing
+  kimi,"pi:kimi-coding",skipped,kimi_credential_unavailable
+  kimi,kimi-code-cli,skipped,kimi_code_cli_credential_unavailable
+  zai,"pi:zai",skipped,zai_credential_unavailable
+  zai,"opencode:auth.json",skipped,zai_credential_unavailable
+  agy,cli,skipped,agy CLI is not installed
+  agy,loopback,skipped,Antigravity/agy is not running
+  alibaba,bl-cli,skipped,bl_cli_unavailable
+  opencode-go,"opencode:auth.json",skipped,opencode_go_credential_unavailable
+  commandcode,"pi:commandcode",skipped,commandcode_sign_in_required
+  commandcode,"env:COMMAND_CODE_API_KEY",skipped,commandcode_sign_in_required
+  commandcode,"env:COMMANDCODE_API_KEY",skipped,commandcode_sign_in_required
+  commandcode,commandcode-cli,skipped,commandcode_sign_in_required
+  commandcode,"omp:commandcode",skipped,commandcode_sign_in_required
+  minimax,"env:MINIMAX_API_KEY",skipped,minimax_credential_unavailable
+  minimax,"pi:minimax",skipped,minimax_credential_unavailable
+  minimax,"minimax:config.json",skipped,minimax_credential_unavailable
+  mimo,"env:MIMO_API_KEY",skipped,mimo_credential_unavailable
+  deepseek,"env:DEEPSEEK_API_KEY",skipped,deepseek_credential_unavailable
+  deepseek,"pi:deepseek",skipped,deepseek_credential_unavailable
+  openrouter,"env:OPENROUTER_API_KEY",skipped,openrouter_credential_unavailable
+  openrouter,"pi:openrouter",skipped,openrouter_credential_unavailable
+  elevenlabs,"env:ELEVENLABS_API_KEY",skipped,elevenlabs_credential_unavailable
+  devin,"env:WINDSURF_API_KEY",skipped,devin_credential_unavailable
+  devin,"file:credentials.toml",skipped,devin_credential_unavailable
+help[1]:
+  Run `quota-axi --full` for windows, pace, reserve, and account evidence
+
+$ quota-axi explicit zai --no-credential-refresh (exit 1)
+bin: /Users/kunchen/.no-mistakes/worktrees/1c5c6552f798/01M36D9K7M3KFN6EFD1ZNZFWRG/dist/bin/quota-axi.js
+description: Report local agent-provider quota windows for routing-aware agents
+quota[0]:
+exhaustion[0]:
+attention[1]{provider,scope,kind,detail,remedy}:
+  zai,all,auth_required,zai_credential_unavailable,none
+help[1]:
+  Run `quota-axi --full` for windows, pace, reserve, and account evidence
+
+$ quota-axi repeated selection --no-credential-refresh (exit 1)
+bin: /Users/kunchen/.no-mistakes/worktrees/1c5c6552f798/01M36D9K7M3KFN6EFD1ZNZFWRG/dist/bin/quota-axi.js
+description: Report local agent-provider quota windows for routing-aware agents
+quota[0]:
+exhaustion[0]:
+attention[2]{provider,scope,kind,detail,remedy}:
+  zai,all,auth_required,zai_credential_unavailable,none
+  codex,all,auth_required,Codex sign-in required,none
+help[1]:
+  Run `quota-axi --full` for windows, pace, reserve, and account evidence

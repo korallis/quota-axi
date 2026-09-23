@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 5,
+  "providers": [
+    {
+      "provider": "claude",
+      "notSetUp": true,
+      "status": "auth_required"
+    },
+    {
+      "provider": "codex",
+      "status": "auth_required"
+    },
+    {
+      "provider": "cursor",
+      "notSetUp": true,
+      "status": "auth_required"
+    },
+    {
+      "provider": "copilot",
+      "notSetUp": true,
+      "status": "auth_required"
+    },
+    {
+      "provider": "grok",
+      "notSetUp": true,
+      "status": "auth_required"
+    },
+    {
+      "provider": "kimi",
+      "notSetUp": true,
+      "status": "auth_required"
+    },
+    {
+      "provider": "zai",
+      "notSetUp": true,
+      "status": "auth_required"
+    },
+    {
+      "provider": "agy",
+      "notSetUp": true,
+      "status": "unavailable"
+    },
+    {
+      "provider": "alibaba",
+      "notSetUp": true,
+      "status": "unavailable"
+    },
+    {
+      "provider": "opencode-go",
+      "notSetUp": true,
+      "status": "auth_required"
+    },
+    {
+      "provider": "commandcode",
+      "notSetUp": true,
+      "status": "auth_required"
+    },
+    {
+      "provider": "minimax",
+      "notSetUp": true,
+      "status": "auth_required"
+    },
+    {
+      "provider": "mimo",
+      "notSetUp": true,
+      "status": "auth_required"
+    },
+    {
+      "provider": "deepseek",
+      "notSetUp": true,
+      "status": "auth_required"
+    },
+    {
+      "provider": "openrouter",
+      "notSetUp": true,
+      "status": "auth_required"
+    },
+    {
+      "provider": "elevenlabs",
+      "notSetUp": true,
+      "status": "auth_required"
+    },
+    {
+      "provider": "devin",
+      "notSetUp": true,
+      "status": "auth_required"
+    }
+  ],
+  "repeatedProviders": [
+    {
+      "provider": "zai",
+      "notSetUp": true
+    },
+    {
+      "provider": "codex"
+    }
+  ]
+}

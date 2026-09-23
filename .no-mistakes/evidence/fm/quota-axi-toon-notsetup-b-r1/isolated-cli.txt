@@ -1,0 +1,62 @@
+ISOLATED CLI, missing credentials, no provider network calls, --no-credential-refresh
+
+Single explicitly requested absent provider (exit 1):
+bin: /Users/kunchen/.no-mistakes/worktrees/1c5c6552f798/01M36D9K7M3KFN6EFD1ZNZFWRG/bin/quota-axi.ts
+description: Report local agent-provider quota windows for routing-aware agents
+generatedAt: "2026-09-23T05:58:36.405Z"
+quota[0]:
+exhaustion[0]:
+attention[1]{provider,scope,kind,detail,remedy}:
+  elevenlabs,all,auth_required,elevenlabs_credential_unavailable (auth unusable),none
+help[1]:
+  Run `quota-axi --full` for windows, pace, reserve, and account evidence
+
+Repeated providers (exit 1):
+bin: /Users/kunchen/.no-mistakes/worktrees/1c5c6552f798/01M36D9K7M3KFN6EFD1ZNZFWRG/bin/quota-axi.ts
+description: Report local agent-provider quota windows for routing-aware agents
+generatedAt: "2026-09-23T05:58:36.541Z"
+quota[0]:
+exhaustion[0]:
+attention[2]{provider,scope,kind,detail,remedy}:
+  elevenlabs,all,auth_required,elevenlabs_credential_unavailable (auth unusable),none
+  deepseek,all,auth_required,deepseek_credential_unavailable,none
+help[1]:
+  Run `quota-axi --full` for windows, pace, reserve, and account evidence
+
+JSON (exit 1):
+{
+  "generatedAt": "2026-09-23T05:58:36.960Z",
+  "schemaVersion": 5,
+  "providers": [
+    {
+      "provider": "elevenlabs",
+      "windows": [],
+      "state": {
+        "status": "auth_required",
+        "stale": false,
+        "error": "elevenlabs_credential_unavailable",
+        "authStatus": "unusable"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": []
+      },
+      "notSetUp": true
+    },
+    {
+      "provider": "deepseek",
+      "windows": [],
+      "state": {
+        "status": "auth_required",
+        "stale": false,
+        "error": "deepseek_credential_unavailable"
+      },
+      "quotaSemantics": {
+        "status": "unknown",
+        "effectiveAvailability": [],
+        "unresolvedWindowIds": []
+      },
+      "notSetUp": true
+    }
+  ]
+}
