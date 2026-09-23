@@ -753,7 +753,7 @@ async function fetchQuotaWithDependencies(
     undefined,
     account?.cacheKey,
     accountIds,
-    credentialState.status === "missing" && piCredentialTried
+    oauthCandidates.length === 0 && piCredentialTried
       ? PI_CODEX_BUILTIN_ID
       : CODEX_HOME_ACCOUNT_KEY,
   );

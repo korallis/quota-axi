@@ -1751,6 +1751,27 @@ describe("Codex Pi sibling account lanes", () => {
     });
   });
 
+  it("publishes the Pi key on a single-account reading whose native store is malformed and Pi credential was rejected", async () => {
+    writeFileSync(join(process.env.CODEX_HOME!, "auth.json"), "{not json", {
+      mode: 0o600,
+    });
+    writePiAuth({
+      "openai-codex": piOauthEntry({
+        access: "pi-access-token",
+        accountId: "acct-b",
+      }),
+    });
+    stubUsageByToken({
+      "pi-access-token": new Response("unauthorized", { status: 401 }),
+    });
+
+    const [report] = await publishedCodexRows();
+    expect(report).toMatchObject({
+      state: { status: "auth_required", stale: false },
+      accountKeys: ["openai-codex"],
+    });
+  });
+
   it("publishes the native key on a profile-only reading", async () => {
     writeNativeAuth("native-access-token", "acct-a");
     stubUsageByToken({
