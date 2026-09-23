@@ -5,6 +5,7 @@ import { writeCachedProviders } from "./cache.js";
 import { withQuotaSemantics } from "./interpretation.js";
 import { createModelsResponse, MODEL_CATALOG_PROVIDER_IDS } from "./models.js";
 import { providerPresence } from "./lib/source-attempts.js";
+import { readTuiShowPreference } from "./lib/user-config.js";
 import { nowIso } from "./lib/time.js";
 import {
   fetchAccountQuotas,
@@ -23,7 +24,6 @@ import {
   detectTuiColorDepth,
   renderQuotaTui,
   renderTuiHintLine,
-  resolveTuiShow,
   type TuiColorDepth,
 } from "./tui.js";
 import { scrollHint } from "./tui-viewport.js";
@@ -78,8 +78,8 @@ async function quotaTuiReport(
   options: ProviderOptions,
 ): Promise<string> {
   // A human display preference, so it is read only on this path: TOON and
-  // JSON never see it, and a bad value fails before any quota is read.
-  const show = resolveTuiShow(process.env);
+  // JSON never see it.
+  const show = readTuiShowPreference();
   const terminal = (): { columns?: number; colorDepth: TuiColorDepth } => ({
     ...(process.stdout.columns === undefined
       ? {}

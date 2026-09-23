@@ -4,10 +4,8 @@ import {
   formatCountdown,
   renderQuotaTui,
   renderTuiHintLine,
-  resolveTuiShow,
   shortWindowLabel,
   thinBar,
-  TUI_SHOW_ENV,
 } from "../src/tui.js";
 import { withQuotaSemantics } from "../src/interpretation.js";
 import { providerPresence } from "../src/lib/source-attempts.js";
@@ -1038,16 +1036,6 @@ describe("used display preference", () => {
     expect(used.map(neutral)).toEqual(remaining.map(neutral));
     for (const line of used)
       expect(displayColumns(line)).toBeLessThanOrEqual(100);
-  });
-
-  it("reads the preference from the environment and rejects anything else", () => {
-    expect(resolveTuiShow({})).toBe("remaining");
-    expect(resolveTuiShow({ [TUI_SHOW_ENV]: "  " })).toBe("remaining");
-    expect(resolveTuiShow({ [TUI_SHOW_ENV]: "remaining" })).toBe("remaining");
-    expect(resolveTuiShow({ [TUI_SHOW_ENV]: " Used " })).toBe("used");
-    expect(() => resolveTuiShow({ [TUI_SHOW_ENV]: "left" })).toThrow(
-      "QUOTA_AXI_TUI_SHOW must be remaining or used",
-    );
   });
 });
 

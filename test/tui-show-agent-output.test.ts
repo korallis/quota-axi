@@ -25,12 +25,13 @@ afterEach(() => {
 
 /**
  * Runs the built CLI against a fake Codex app-server with a frozen clock, so
- * two runs that differ only in the environment can be compared byte for byte.
+ * two runs that differ only in the user config file can be compared byte for
+ * byte. `config` is that file's contents; left out, no file exists.
  */
 function builtCli(): {
   run: (
     flags: string[],
-    show?: string,
+    config?: string,
   ) => { status: number | null; stdout: string; stderr: string; cache: string };
 } {
   const root = mkdtempSync(join(tmpdir(), "quota-axi-tui-show-"));
@@ -96,10 +97,16 @@ process.stdin.on("data", (chunk) => {
 
   let runs = 0;
   return {
-    run: (flags, show) => {
+    run: (flags, config) => {
       // Every run starts from its own empty cache, so no run reads another's.
-      const cacheHome = join(root, `cache-${runs++}`);
+      const run = runs++;
+      const cacheHome = join(root, `cache-${run}`);
       mkdirSync(cacheHome, { mode: 0o700 });
+      const configHome = join(root, `config-${run}`);
+      if (config !== undefined) {
+        mkdirSync(join(configHome, "quota-axi"), { recursive: true });
+        writeFileSync(join(configHome, "quota-axi", "config.json"), config);
+      }
       const result = spawnSync(
         process.execPath,
         [
@@ -116,10 +123,10 @@ process.stdin.on("data", (chunk) => {
           env: {
             HOME: home,
             XDG_CACHE_HOME: cacheHome,
+            XDG_CONFIG_HOME: configHome,
             QUOTA_AXI_CODEX_BINARY: codex,
             PATH: process.env.PATH ?? "",
             TZ: "UTC",
-            ...(show === undefined ? {} : { QUOTA_AXI_TUI_SHOW: show }),
           },
         },
       );
@@ -143,7 +150,10 @@ process.stdin.on("data", (chunk) => {
   };
 }
 
-describe("QUOTA_AXI_TUI_SHOW agent output", () => {
+const USED = '{"tui":{"show":"used"}}';
+const REMAINING = '{"tui":{"show":"remaining"}}';
+
+describe("--tui direction preference and agent output", () => {
   it("leaves TOON, JSON, and the cache byte-identical whatever it is set to", () => {
     const cli = builtCli();
     for (const flags of [[], ["--full"], ["--json"], ["--json", "--full"]]) {
@@ -151,10 +161,10 @@ describe("QUOTA_AXI_TUI_SHOW agent output", () => {
       expect(baseline.status, baseline.stderr).toBe(0);
       expect(baseline.stdout).toContain("codex");
       expect(baseline.cache).not.toBe("");
-      // `used` flips the TUI, and a value the TUI would reject never even
-      // reaches an agent-facing surface.
-      for (const show of ["used", "remaining", "sideways"]) {
-        expect(cli.run(flags, show), `${flags.join(" ")} ${show}`).toEqual(
+      // `used` flips the TUI; no config file, `remaining`, and an ignored
+      // value keep it. None of them may reach an agent-facing surface.
+      for (const config of [USED, REMAINING, '{"tui":{"show":"left"}}']) {
+        expect(cli.run(flags, config), `${flags.join(" ")} ${config}`).toEqual(
           baseline,
         );
       }
@@ -164,7 +174,8 @@ describe("QUOTA_AXI_TUI_SHOW agent output", () => {
   it("flips only the --tui report", () => {
     const cli = builtCli();
     const remaining = cli.run(["--tui", "--once"]);
-    const used = cli.run(["--tui", "--once"], "used");
+    expect(cli.run(["--tui", "--once"], REMAINING)).toEqual(remaining);
+    const used = cli.run(["--tui", "--once"], USED);
     expect(remaining.status, remaining.stderr).toBe(0);
     expect(used.status, used.stderr).toBe(0);
     expect(remaining.stdout).toMatch(/│ {3}70% week +on pace ✓/);
@@ -174,12 +185,11 @@ describe("QUOTA_AXI_TUI_SHOW agent output", () => {
     expect(used.cache).toBe(remaining.cache);
   }, 30_000);
 
-  it("rejects an unknown --tui preference before reading any quota", () => {
-    const rejected = builtCli().run(["--tui", "--once"], "left");
-    expect(rejected.status).toBe(2);
-    expect(rejected.stdout + rejected.stderr).toContain(
-      "QUOTA_AXI_TUI_SHOW must be remaining or used",
-    );
-    expect(rejected.cache).toBe("");
+  it("keeps the default --tui view for a value it does not recognize", () => {
+    const cli = builtCli();
+    const remaining = cli.run(["--tui", "--once"]);
+    for (const config of ['{"tui":{"show":"Used"}}', "not json"]) {
+      expect(cli.run(["--tui", "--once"], config), config).toEqual(remaining);
+    }
   }, 30_000);
 });

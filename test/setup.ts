@@ -37,3 +37,11 @@ process.env.XDG_CACHE_HOME = join(
   tmpdir(),
   `quota-axi-test-cache-${process.pid}-${randomUUID()}`,
 );
+
+// The user config file (the `--tui` direction preference) must never come
+// from the developer's real ~/.config/quota-axi. Tests that exercise it write
+// their own file.
+process.env.XDG_CONFIG_HOME = join(
+  tmpdir(),
+  `quota-axi-test-config-${process.pid}-${randomUUID()}`,
+);
