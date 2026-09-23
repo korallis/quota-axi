@@ -151,7 +151,8 @@ describe("QUOTA_AXI_TUI_SHOW agent output", () => {
       expect(baseline.status, baseline.stderr).toBe(0);
       expect(baseline.stdout).toContain("codex");
       expect(baseline.cache).not.toBe("");
-      // `used` flips the TUI, and no value reaches an agent-facing surface.
+      // `used` flips the TUI, and a value the TUI would reject never even
+      // reaches an agent-facing surface.
       for (const show of ["used", "remaining", "sideways"]) {
         expect(cli.run(flags, show), `${flags.join(" ")} ${show}`).toEqual(
           baseline,
@@ -173,14 +174,12 @@ describe("QUOTA_AXI_TUI_SHOW agent output", () => {
     expect(used.cache).toBe(remaining.cache);
   }, 30_000);
 
-  it("keeps the remaining --tui report for any value other than used", () => {
-    const cli = builtCli();
-    const remaining = cli.run(["--tui", "--once"]);
-    expect(remaining.status, remaining.stderr).toBe(0);
-    for (const show of ["remaining", "Used", " used ", "left"]) {
-      const other = cli.run(["--tui", "--once"], show);
-      expect(other.status, other.stderr).toBe(0);
-      expect(other.stdout, show).toBe(remaining.stdout);
-    }
+  it("rejects an unknown --tui preference before reading any quota", () => {
+    const rejected = builtCli().run(["--tui", "--once"], "left");
+    expect(rejected.status).toBe(2);
+    expect(rejected.stdout + rejected.stderr).toContain(
+      "QUOTA_AXI_TUI_SHOW must be remaining or used",
+    );
+    expect(rejected.cache).toBe("");
   }, 30_000);
 });

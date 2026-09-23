@@ -78,7 +78,7 @@ async function quotaTuiReport(
   options: ProviderOptions,
 ): Promise<string> {
   // A human display preference, so it is read only on this path: TOON and
-  // JSON never see it.
+  // JSON never see it, and a bad value fails before any quota is read.
   const show = resolveTuiShow(process.env);
   const terminal = (): { columns?: number; colorDepth: TuiColorDepth } => ({
     ...(process.stdout.columns === undefined
