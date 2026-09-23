@@ -1,0 +1,117 @@
+{
+  "generatedAt": "2026-09-23T06:30:41.585Z",
+  "schemaVersion": 6,
+  "providers": [
+    {
+      "provider": "codex",
+      "plan": "plus",
+      "windows": [
+        {
+          "id": "weekly",
+          "label": "week",
+          "kind": "weekly",
+          "resetsAt": "2026-09-23T06:47:21.584Z",
+          "percentRemaining": 75,
+          "pace": {
+            "status": "behind",
+            "reservePercentPoints": 74.8347,
+            "burnMultiple": 0.2504
+          }
+        }
+      ],
+      "state": {
+        "status": "fresh",
+        "stale": false
+      },
+      "accountKeys": [
+        "openai-codex"
+      ],
+      "accountKey": "openai-codex",
+      "quotaSemantics": {
+        "status": "known",
+        "effectiveAvailability": [
+          {
+            "scope": "all_models",
+            "status": "known",
+            "effectivePercentRemaining": 75,
+            "boundedBy": [
+              "weekly"
+            ],
+            "limitingWindowIds": [
+              "weekly"
+            ],
+            "pace": {
+              "status": "behind",
+              "worstReservePercentPoints": 74.8347,
+              "worstReserveWindowId": "weekly"
+            },
+            "runway": {
+              "status": "through_reset",
+              "projectionConfidence": "established"
+            },
+            "selection": {
+              "status": "known",
+              "spendPriority": 100
+            }
+          }
+        ]
+      }
+    },
+    {
+      "provider": "codex",
+      "plan": "plus",
+      "windows": [
+        {
+          "id": "weekly",
+          "label": "week",
+          "kind": "weekly",
+          "resetsAt": "2026-09-23T06:47:21.584Z",
+          "percentRemaining": 62,
+          "pace": {
+            "status": "behind",
+            "reservePercentPoints": 61.8347,
+            "burnMultiple": 0.3806
+          }
+        }
+      ],
+      "state": {
+        "status": "fresh",
+        "stale": false
+      },
+      "accountKeys": [
+        "openai-codex-work",
+        "codex-home"
+      ],
+      "accountKey": "openai-codex-work",
+      "quotaSemantics": {
+        "status": "known",
+        "effectiveAvailability": [
+          {
+            "scope": "all_models",
+            "status": "known",
+            "effectivePercentRemaining": 62,
+            "boundedBy": [
+              "weekly"
+            ],
+            "limitingWindowIds": [
+              "weekly"
+            ],
+            "pace": {
+              "status": "behind",
+              "worstReservePercentPoints": 61.8347,
+              "worstReserveWindowId": "weekly"
+            },
+            "runway": {
+              "status": "through_reset",
+              "projectionConfidence": "established"
+            },
+            "selection": {
+              "status": "known",
+              "spendPriority": 100
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

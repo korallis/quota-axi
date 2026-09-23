@@ -1,0 +1,84 @@
+{
+  "generatedAt": "2026-09-23T06:30:41.841Z",
+  "schemaVersion": 5,
+  "providers": [
+    {
+      "provider": "codex",
+      "label": "Codex",
+      "source": "cache",
+      "windows": [
+        {
+          "id": "weekly",
+          "label": "week",
+          "kind": "weekly",
+          "percentUsed": 23,
+          "percentRemaining": 77,
+          "resetsAt": "2026-09-23T06:47:21.777Z",
+          "windowSeconds": 604800,
+          "pace": {
+            "status": "unknown",
+            "reason": "stale"
+          }
+        }
+      ],
+      "state": {
+        "status": "stale",
+        "stale": true,
+        "sourcesTried": [
+          "oauth",
+          "pi:openai-codex",
+          "cache"
+        ],
+        "refreshedAt": "2026-09-23T06:30:41.777Z",
+        "error": "Codex quota unavailable"
+      },
+      "plan": "plus",
+      "attempts": [
+        {
+          "source": "oauth",
+          "status": "skipped",
+          "error": "credentials_missing"
+        },
+        {
+          "source": "pi:openai-codex",
+          "status": "failed",
+          "error": "Codex quota unavailable"
+        }
+      ],
+      "accountKeys": [
+        "openai-codex"
+      ],
+      "quotaSemantics": {
+        "status": "unknown",
+        "description": "The raw quota windows are stale diagnostic data, so effective remaining is unknown until the provider refreshes successfully.",
+        "effectiveAvailability": [
+          {
+            "scope": "all_models",
+            "status": "unknown",
+            "boundedBy": [
+              "weekly"
+            ],
+            "runway": {
+              "status": "unknown",
+              "unmeasurableWindowIds": [
+                "weekly"
+              ]
+            },
+            "selection": {
+              "status": "unknown",
+              "unmeasurableWindowIds": [
+                "weekly"
+              ]
+            },
+            "pace": {
+              "status": "unknown",
+              "unknownWindowIds": [
+                "weekly"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
