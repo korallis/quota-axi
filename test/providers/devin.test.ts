@@ -269,16 +269,22 @@ describe("Devin credential matrix", () => {
     });
   });
 
-  it("lets a daily figure bind when the vendor does not hide it", () => {
+  it("does not bind a daily figure without evidence that the vendor enforces it", () => {
     const payload = structuredClone(MAX) as {
       planInfo: Record<string, unknown>;
     };
     delete payload.planInfo.hideDailyQuota;
     const normalized = normalizeDevinPayload(payload, NOW);
-    expect(normalized.untrustedWindowIds).toEqual([]);
+    expect(normalized.windows.map((window) => window.id)).toEqual(["weekly"]);
+    expect(normalized.untrustedWindowIds).toEqual(["daily"]);
+    expect(interpretNormalized(normalized).quotaSemantics).toMatchObject({
+      status: "partial",
+      unresolvedWindowIds: ["daily"],
+    });
     expect(
-      interpretNormalized(normalized).quotaSemantics?.effectiveAvailability[0],
-    ).toMatchObject({ effectivePercentRemaining: 10 });
+      interpretNormalized(normalized).quotaSemantics?.effectiveAvailability[0]
+        ?.effectivePercentRemaining,
+    ).toBeUndefined();
   });
 
   it("rejects a hideDailyQuota that is not a boolean", () => {

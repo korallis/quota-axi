@@ -8,6 +8,7 @@
     }
   },
   "planInfo": {
-    "billingStrategy": "BILLING_STRATEGY_QUOTA"
+    "billingStrategy": "BILLING_STRATEGY_QUOTA",
+    "hideDailyQuota": false
   }
 }

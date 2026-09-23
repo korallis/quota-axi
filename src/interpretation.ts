@@ -204,8 +204,9 @@ function semanticsFor(
  * Devin's daily and weekly windows meter included plan quota. Paid extra usage
  * continues past a zeroed window, and free models do not draw on these windows,
  * so they bound `included_quota` rather than `all_models`. Max omits the daily
- * window, and weekly alone is then the bound. Effective remaining is the
- * minimum across the windows that are present.
+ * window only when `hideDailyQuota` is explicitly true, and weekly alone is
+ * then the bound. Otherwise incomplete caps remain unresolved rather than
+ * publishing a known effective remaining percentage.
  */
 function devinSemantics(
   windows: QuotaWindow[],

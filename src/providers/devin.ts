@@ -736,8 +736,9 @@ function rejectHttpFailure(response: Response, receivedAt: number): void {
  * Quota windows are published only for `BILLING_STRATEGY_QUOTA`. The daily
  * window reuses the existing `session` kind (id `daily`, label `day`) so the
  * published window-kind enum stays unchanged; `windowSeconds` carries the
- * vendor's 86,400s day. `planInfo.hideDailyQuota` omits that window, because
- * Max has no daily cap and a figure the vendor hides must not bound anything.
+ * vendor's 86,400s day. `hideDailyQuota: true` omits that window, because Max
+ * has no daily cap; a missing flag leaves the daily cap unresolved rather than
+ * allowing a potentially unenforced figure to bind included quota.
  * Every other expected window whose figure is missing or belongs to a finished
  * cycle is named as untrusted, and a body carrying quota fields without a
  * billing strategy, or with no usable expected window, is `schema_incomplete`.
@@ -823,7 +824,7 @@ export function normalizeDevinPayload(
         ),
       ],
     ];
-    if (planInfo.hideDailyQuota !== true) {
+    if (planInfo.hideDailyQuota === false) {
       expected.push([
         "daily",
         normalizeQuotaWindow(
@@ -837,6 +838,10 @@ export function normalizeDevinPayload(
           now,
         ),
       ]);
+    } else if (planInfo.hideDailyQuota !== true) {
+      // A missing flag cannot distinguish an enforced daily cap from a Max
+      // plan's vestigial, unenforced daily figure. Neither value may bind.
+      untrustedWindowIds.push("daily");
     }
     for (const [id, window] of expected) {
       if (window) windows.push(window);
