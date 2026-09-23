@@ -287,8 +287,9 @@ export type ProviderQuota = {
   accountKey?: string;
   /**
    * Every credential key this row covers, own `accountKey` first. Present on
-   * every quota row; a row covering one credential lists just its own key, and
-   * a provider without account discovery lists `default`.
+   * every quota-axi output quota row; optional here so package consumers can
+   * construct ProviderQuota without it. A row covering one credential lists
+   * just its own key, and a provider without account discovery lists `default`.
    */
   accountKeys?: string[];
   /** Display name. Omitted from default `--json`; see `--full`. */

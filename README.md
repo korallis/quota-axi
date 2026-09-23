@@ -412,7 +412,7 @@ A proven sign-out, or a native login that coalesces into a Pi lane with a fresh 
 
 When a provider expands to multiple accounts, the report uses quota `schemaVersion: 6` (auth and models use version 2).
 Every provider record then has an `accountKey`; providers still using one selected account use the literal `default`.
-Every quota row, in schema 5 and schema 6 alike, has `accountKeys`: the credential keys that one row covers, own `accountKey` first, then any keys folded into it in the order the provider recorded them.
+Every quota-axi output quota row, in schema 5 and schema 6 alike, has `accountKeys`: the credential keys that one row covers, own `accountKey` first, then any keys folded into it in the order the provider recorded them. The exported `ProviderQuota.accountKeys` type remains optional so package consumers can construct reports without it; quota-axi output sets it on every quota row.
 A row covering one credential lists just its own key. A consumer that holds a credential key binds the row whose `accountKeys` contains that key. Matching `accountKey` alone misses a key that was folded into another row.
 A provider without account discovery lists `accountKeys: ["default"]`, the same literal as its schema 6 `accountKey` filler. A discovering provider that stays on one row, such as two Pi keys for one account with no native login, keeps schema 5 and no `accountKey`, and its `accountKeys` starts with that lane's key.
 Membership mirrors quota-axi's own grouping exactly: every key the provider grouped into the row, and no other. That grouping relies on stored account identity when no fresh live reading confirms it, so a fold is published as applied even when a later live reading names a different account.

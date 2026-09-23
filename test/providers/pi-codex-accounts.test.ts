@@ -1670,6 +1670,40 @@ describe("Codex Pi sibling account lanes", () => {
     );
   });
 
+  it("pairs single-winner keys from the credentials used before either store changes during the request", async () => {
+    for (const rewrittenStore of ["native", "pi"] as const) {
+      writeNativeAuth("native-access-token", "acct-a");
+      writePiAuth({
+        "openai-codex": piOauthEntry({
+          access: "pi-access-token",
+          accountId: "acct-a",
+        }),
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          if (rewrittenStore === "native") {
+            writeNativeAuth("other-native-token", "acct-b");
+          } else {
+            writePiAuth({
+              "openai-codex": piOauthEntry({
+                access: "other-pi-token",
+                accountId: "acct-b",
+              }),
+            });
+          }
+          return usage(20, "a@example.invalid", "acct-a");
+        }),
+      );
+      const adapter = (
+        await import("../../src/providers/codex.js")
+      ).createCodexAdapter();
+      const report = await adapter.fetchQuota(OPTIONS);
+      expect(report.accountKeys).toEqual(["codex-home", "openai-codex"]);
+      expect(report.account?.accountId).toBe("acct-a");
+    }
+  });
+
   it("publishes only the answering key on the single-account row for distinct accounts", async () => {
     await expectPublishedMembership(
       { token: "native-access-token", accountId: "acct-a" },

@@ -170,26 +170,33 @@ async function fetchSingleWinnerQuota(
   dependencies: CodexDependencies,
   options: ProviderOptions,
 ): Promise<ProviderQuota> {
-  const report = await fetchQuotaWithDependencies(dependencies, options);
-  const ownKeys = report.accountKeys ?? [];
-  const pairedKeys = [CODEX_HOME_ACCOUNT_KEY, PI_CODEX_BUILTIN_ID];
-  if (
-    isProfileOnly(options) ||
-    !ownKeys.some((key) => pairedKeys.includes(key))
-  ) {
-    return report;
-  }
+  if (isProfileOnly(options))
+    return fetchQuotaWithDependencies(dependencies, options);
   const nativeState = readCredentialState();
-  const nativeStoredAccountId =
-    nativeState.status === "available" || nativeState.status === "expired"
-      ? nativeState.credentials.accountId
-      : undefined;
   let builtinResolution: PiCodexCredentialResolution;
   try {
     builtinResolution = await dependencies.piCodexBroker.resolve();
   } catch {
     builtinResolution = { status: "error" };
   }
+  const report = await fetchQuotaWithDependencies(
+    dependencies,
+    options,
+    undefined,
+    {
+      nativeState,
+      builtinResolution,
+    },
+  );
+  const ownKeys = report.accountKeys ?? [];
+  const pairedKeys = [CODEX_HOME_ACCOUNT_KEY, PI_CODEX_BUILTIN_ID];
+  if (!ownKeys.some((key) => pairedKeys.includes(key))) {
+    return report;
+  }
+  const nativeStoredAccountId =
+    nativeState.status === "available" || nativeState.status === "expired"
+      ? nativeState.credentials.accountId
+      : undefined;
   if (
     nativeStoredAccountId === undefined ||
     nativeStoredAccountId !== resolvedAccountId(builtinResolution)
@@ -564,6 +571,10 @@ async function fetchQuotaWithDependencies(
   dependencies: CodexDependencies,
   options: ProviderOptions,
   account?: CodexAccountContext,
+  singleWinnerCredentials?: {
+    nativeState: CredentialState;
+    builtinResolution: PiCodexCredentialResolution;
+  },
 ): Promise<ProviderQuota> {
   if (isProfileOnly(options)) return fetchProfileOnlyQuota();
   if (account?.kind === "pi") return fetchPiAccountQuota(dependencies, account);
@@ -577,7 +588,8 @@ async function fetchQuotaWithDependencies(
   // make statusFromError advise a sign-in for what is a network outage.
   let errorIsDefault = true;
 
-  const credentialState = readCredentialState();
+  const credentialState =
+    singleWinnerCredentials?.nativeState ?? readCredentialState();
   // The accounts whose credentials this reading has tried. A failure may only
   // serve a cached snapshot stamped with one of them: a credential never tried
   // cannot vouch for windows filed under the slot this reading shares.
@@ -644,11 +656,13 @@ async function fetchQuotaWithDependencies(
 
   let piCredentialTried = false;
   if (!account || account.includesBuiltinPi) {
-    let piResolution: PiCodexCredentialResolution;
-    try {
-      piResolution = await dependencies.piCodexBroker.resolve();
-    } catch {
-      piResolution = { status: "error" };
+    let piResolution = singleWinnerCredentials?.builtinResolution;
+    if (!piResolution) {
+      try {
+        piResolution = await dependencies.piCodexBroker.resolve();
+      } catch {
+        piResolution = { status: "error" };
+      }
     }
     // Only a resolution holding credentials names an account, and those
     // credentials are always tried below.
