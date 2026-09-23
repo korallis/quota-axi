@@ -1008,14 +1008,15 @@ function inspectResolution(
 
 /**
  * A deliberately narrow TOML reader for the flat credentials file. It keeps
- * only `windsurf_api_key` and `api_server_url`. Anything it cannot walk, a
- * nested table, or a duplicate of those keys fails the document closed.
+ * only top-level `windsurf_api_key` and `api_server_url`. Other lines and
+ * sections are ignored; malformed or duplicate needed values fail closed.
  */
 export function parseDevinCredentialsToml(
   text: string,
 ): CredentialFields | undefined {
   const fields: CredentialFields = {};
   const seen = new Set<string>();
+  let inSection = false;
   let index = 0;
   if (text.charCodeAt(0) === 0xfeff) index = 1;
   const source = text;
@@ -1038,15 +1039,21 @@ export function parseDevinCredentialsToml(
     while (true) {
       skipIgnorable();
       if (atEnd()) return fields;
-      if (source[index] === "[") return undefined;
-      const key = readKey();
+      const lineEnd = source.indexOf("\n", index);
+      const line = source.slice(index, lineEnd < 0 ? undefined : lineEnd);
+      if (line.startsWith("[")) inSection = true;
+      const key = line.match(/^([A-Za-z0-9_-]+)[ \t]*=/)?.[1];
+      if (inSection || !key || !CREDENTIAL_KEYS.has(key)) {
+        index = lineEnd < 0 ? source.length : lineEnd + 1;
+        continue;
+      }
+      readKey();
       skipInline();
       if (source[index] !== "=") return undefined;
       index += 1;
       skipInline();
-      const value = readValue();
+      const value = readString();
       if (value === undefined) return undefined;
-      const kept = typeof value === "string" ? value : undefined;
       skipInline();
       if (!atEnd() && source[index] === "#") {
         while (!atEnd() && source[index] !== "\n") index += 1;
@@ -1054,12 +1061,10 @@ export function parseDevinCredentialsToml(
       if (!atEnd() && source[index] !== "\n" && source[index] !== "\r") {
         return undefined;
       }
-      if (!CREDENTIAL_KEYS.has(key)) continue;
-      if (kept === undefined) return undefined;
       if (seen.has(key)) return undefined;
       seen.add(key);
-      if (key === "windsurf_api_key") fields.windsurf_api_key = kept;
-      if (key === "api_server_url") fields.api_server_url = kept;
+      if (key === "windsurf_api_key") fields.windsurf_api_key = value;
+      if (key === "api_server_url") fields.api_server_url = value;
     }
   } catch {
     return undefined;
@@ -1076,32 +1081,6 @@ export function parseDevinCredentialsToml(
     while (!atEnd() && (source[index] === " " || source[index] === "\t")) {
       index += 1;
     }
-  }
-
-  function readValue(): string | { skipped: true } | undefined {
-    if (source.startsWith("true", index) && boundary(index + 4)) {
-      index += 4;
-      return { skipped: true };
-    }
-    if (source.startsWith("false", index) && boundary(index + 5)) {
-      index += 5;
-      return { skipped: true };
-    }
-    if (/[0-9-]/.test(source[index] ?? "")) {
-      const start = index;
-      if (source[index] === "-") index += 1;
-      if (!/[0-9]/.test(source[index] ?? "")) return undefined;
-      while (/[0-9]/.test(source[index] ?? "")) index += 1;
-      if (index === start || (source[start] === "-" && index === start + 1)) {
-        return undefined;
-      }
-      return { skipped: true };
-    }
-    return readString();
-  }
-
-  function boundary(at: number): boolean {
-    return at >= source.length || /[\s#]/.test(source[at] ?? "");
   }
 
   function readString(): string | undefined {

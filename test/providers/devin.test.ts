@@ -687,13 +687,44 @@ describe("Devin credentials file", () => {
     expect(report.state.status).toBe("fresh");
   });
 
-  it("does not send a malformed credentials file", async () => {
+  it.each([
+    ["array", "metadata = [1, 2, 3]"],
+    ["timestamp", "created_at = 2026-09-22T12:00:00Z"],
+    ["float", "ratio = 0.75"],
+    ["inline table", 'metadata = { version = "1.0" }'],
+    ["unknown key", 'devin_webapp_host = "app.devin.ai"'],
+    ["table header", "[metadata]\nwindsurf_api_key = [1, 2]"],
+  ])(
+    "ignores unrelated TOML %s in the credentials file",
+    async (_name, metadata) => {
+      tempDir = mkdtempSync(join(tmpdir(), "quota-axi-devin-"));
+      mkdirSync(join(tempDir, "devin"));
+      writeFileSync(
+        join(tempDir, "devin", "credentials.toml"),
+        `windsurf_api_key = "${FILE_KEY}"\n${metadata}\n`,
+      );
+      const request = sequentialFetch([jsonResponse(PRO)]);
+      const source = createDevinFileSource({ XDG_DATA_HOME: tempDir });
+      expect(source.inspect().status).toBe("available");
+      const report = await testAdapter({
+        fetch: request,
+        sources: [source],
+      }).fetchQuota(OPTIONS);
+
+      expect(report.state.status).toBe("fresh");
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(apiKey(request.mock.calls[0][1])).toBe(FILE_KEY);
+    },
+  );
+
+  it.each([
+    'windsurf_api_key = "valid-key"\nwindsurf_api_key = [1, 2]',
+    'windsurf_api_key = "unterminated',
+    `windsurf_api_key = "${FILE_KEY}"\napi_server_url = { host = 'server.codeium.com' }`,
+  ])("does not send a malformed needed credential value: %s", async (line) => {
     tempDir = mkdtempSync(join(tmpdir(), "quota-axi-devin-"));
     mkdirSync(join(tempDir, "devin"));
-    writeFileSync(
-      join(tempDir, "devin", "credentials.toml"),
-      "windsurf_api_key = [\n",
-    );
+    writeFileSync(join(tempDir, "devin", "credentials.toml"), `${line}\n`);
     const request = vi.fn();
     const report = await testAdapter({
       fetch: request as unknown as typeof fetch,
