@@ -131,7 +131,9 @@ describe("Kimi request transport", () => {
     const originalFetch = globalThis.fetch;
     const originalNoProxy = process.env.NO_PROXY;
     const originalLowerNoProxy = process.env.no_proxy;
-    const capturedFetch = vi.fn(async () => new Response(null, { status: 503 }));
+    const capturedFetch = vi.fn(
+      async () => new Response(null, { status: 503 }),
+    );
     const request = vi.fn(async () => jsonResponse(SUCCESS_PAYLOAD));
     globalThis.fetch = capturedFetch as typeof fetch;
     process.env.NO_PROXY = "api.kimi.com";
@@ -1682,9 +1684,9 @@ describe("Kimi credential outcomes and cache policy", () => {
       state: { status: "stale", error: "provider_unavailable" },
     });
     expect(readCachedProvider).toHaveBeenCalledWith(matchingContext);
-    const other = await adapter("omp:kimi-code:identity:other-account").fetchQuota(
-      OPTIONS,
-    );
+    const other = await adapter(
+      "omp:kimi-code:identity:other-account",
+    ).fetchQuota(OPTIONS);
     expect(other).toMatchObject({
       source: "unavailable",
       windows: [],
