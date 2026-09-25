@@ -423,7 +423,7 @@ async function fetchExpandedOmpQuota(
 ): Promise<ProviderQuota[]> {
   if (
     reports.length === 0 ||
-    reports.some((report) => report.state.status !== "auth_required")
+    reports.some((report) => report.state.status === "fresh")
   )
     return reports;
   const fallback = await fetchOmpCodexQuota(
