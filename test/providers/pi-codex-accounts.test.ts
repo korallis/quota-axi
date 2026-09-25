@@ -179,6 +179,57 @@ describe("Codex Pi sibling account lanes", () => {
     );
   });
 
+  it("keeps an expanded Pi failure inconclusive when OMP is rate limited", async () => {
+    writePiAuth({
+      "openai-codex": piOauthEntry({
+        access: "rejected-personal-access-token",
+        accountId: "acct-personal",
+      }),
+      "openai-codex-work": piOauthEntry({
+        access: "rejected-work-access-token",
+        accountId: "acct-work",
+      }),
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) =>
+        new Headers(init?.headers).get("authorization") ===
+        "Bearer omp-access-token"
+          ? new Response(null, { status: 429 })
+          : new Response(null, { status: 401 }),
+      ),
+    );
+    const adapter = (
+      await import("../../src/providers/codex.js")
+    ).createCodexAdapter({
+      ompBroker: {
+        resolve: async () => ({
+          status: "available",
+          credential: { accessToken: "omp-access-token" },
+        }),
+        inspect: async () => ({ status: "available" }),
+      },
+    });
+    const reports = await fetchAccountQuotas(adapter, OPTIONS);
+
+    expect(reports).toHaveLength(2);
+    expect(reports[0]).toMatchObject({
+      accountKey: "openai-codex",
+      state: { status: "auth_required" },
+    });
+    expect(reports[1]).toMatchObject({
+      accountKey: "openai-codex-work",
+      state: {
+        status: "rate_limited",
+        error: "Codex quota endpoint rate limited",
+      },
+      attempts: [
+        { source: "pi:openai-codex-work", status: "failed" },
+        { source: "omp:openai-codex", status: "failed" },
+      ],
+    });
+  });
+
   it("does not hide a live work account when the personal probe fails", async () => {
     writePiAuth({
       "openai-codex": piOauthEntry({

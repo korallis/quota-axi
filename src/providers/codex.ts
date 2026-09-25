@@ -657,6 +657,22 @@ async function fetchOmpCodexQuota(
     error,
     credentialPresent: true,
   });
+  if (selection.kind === "transient") {
+    return {
+      ...previous,
+      state: {
+        ...previous.state,
+        status:
+          selection.retryAfter || statusFromError(error) === "rate_limited"
+            ? "rate_limited"
+            : "error",
+        error,
+        retryAfter: selection.retryAfter,
+        sourcesTried: sourceNames(attempts),
+      },
+      attempts,
+    };
+  }
   if (
     selection.kind === "rejected" &&
     resolution.status === "expired" &&

@@ -202,7 +202,7 @@ export async function fetchQuotaWithRuntime(
         });
       } catch (error) {
         const message = errorMessage(error);
-        finalFailure = new Error(message);
+        finalFailure = error;
         attempts[attempts.length - 1] = {
           source: "omp:google-antigravity",
           status: "failed",
@@ -1013,7 +1013,11 @@ function statusForError(error: string): ProviderStatus {
 }
 
 function statusForFailure(error: unknown): ProviderStatus {
-  if (error instanceof AgyUnavailableError) return "unavailable";
+  if (
+    error instanceof AgyUnavailableError ||
+    (error instanceof AgyHttpError && error.status >= 500)
+  )
+    return "unavailable";
   return statusForError(errorMessage(error));
 }
 
@@ -1316,7 +1320,7 @@ async function fetchOmpAntigravityQuota(
   if (!projectId) throw new Error("antigravity_project_id_missing");
 
   const account = email ? { email } : undefined;
-  let summaryFailure: string | undefined;
+  let summaryFailure: Error | undefined;
   try {
     const summary = await requestOmpAntigravityJson(
       `${OMP_ANTIGRAVITY_BASE_URL}${OMP_ANTIGRAVITY_QUOTA_PATH}`,
@@ -1327,9 +1331,12 @@ async function fetchOmpAntigravityQuota(
     if (normalized && normalized.windows.length > 0) {
       return { ...normalized, account };
     }
-    summaryFailure = "Antigravity quota summary malformed";
+    summaryFailure = new AgyMalformedResponseError(
+      "Antigravity quota summary malformed",
+    );
   } catch (error) {
-    summaryFailure = errorMessage(error);
+    summaryFailure =
+      error instanceof Error ? error : new Error("Antigravity quota unavailable");
   }
 
   try {
@@ -1340,10 +1347,16 @@ async function fetchOmpAntigravityQuota(
     );
     const windows = normalizeOmpAntigravityModels(models);
     if (windows.length > 0) return { windows, refreshedAt: nowIso(), account };
-  } catch {
-    summaryFailure ??= "Antigravity quota unavailable";
+  } catch (error) {
+    if (
+      !summaryFailure ||
+      (!staleEligibleFailure(summaryFailure) && staleEligibleFailure(error))
+    ) {
+      summaryFailure =
+        error instanceof Error ? error : new Error("Antigravity quota unavailable");
+    }
   }
-  throw new Error(summaryFailure ?? "Antigravity quota unavailable");
+  throw summaryFailure ?? new Error("Antigravity quota unavailable");
 }
 
 async function requestOmpAntigravityJson(
@@ -1371,13 +1384,13 @@ async function requestOmpAntigravityJson(
         signal: controller.signal,
       });
     } catch {
-      throw new Error(
+      throw new AgyUnavailableError(
         controller.signal.aborted
           ? "Antigravity quota request timed out"
           : "Antigravity quota request failed",
       );
     }
-    if (!response.ok) throw new Error(httpErrorMessage(response.status));
+    if (!response.ok) throw new AgyHttpError(response.status);
     const declared = Number(response.headers.get("content-length"));
     if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
       throw new Error("Antigravity quota response too large");
