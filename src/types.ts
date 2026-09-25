@@ -415,6 +415,7 @@ export type ProviderAdapter = {
    */
   isUncertainSkip?(attempt: SourceAttempt): boolean;
   discoverAccounts?(): Promise<ProviderAccount[] | undefined>;
+  afterAccountQuotas?(reports: ProviderQuota[]): Promise<ProviderQuota[]>;
   fetchQuota(options: ProviderOptions): Promise<ProviderQuota>;
   inspectAuth(options: ProviderOptions): Promise<AuthProviderReport>;
 };

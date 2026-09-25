@@ -13,6 +13,7 @@ import { quotaJsonReport, renderQuotaToon } from "../../src/render.js";
 import { renderQuotaTui } from "../../src/tui.js";
 import type { ProviderOptions, ProviderQuota } from "../../src/types.js";
 
+const originalHome = process.env.HOME;
 const originalCodexHome = process.env.CODEX_HOME;
 const originalCodexBinary = process.env.QUOTA_AXI_CODEX_BINARY;
 const originalPiAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -28,6 +29,7 @@ beforeEach(() => {
   vi.resetModules();
   vi.unstubAllGlobals();
   tempDir = mkdtempSync(join(tmpdir(), "quota-axi-codex-accounts-"));
+  process.env.HOME = tempDir;
   process.env.CODEX_HOME = tempDir;
   process.env.PI_CODING_AGENT_DIR = join(tempDir, "pi-agent");
   process.env.XDG_CACHE_HOME = join(tempDir, "cache");
@@ -47,6 +49,8 @@ afterEach(() => {
   vi.doUnmock("../../src/lib/process.js");
   vi.doUnmock("node:child_process");
   vi.resetModules();
+  if (originalHome === undefined) delete process.env.HOME;
+  else process.env.HOME = originalHome;
   if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
   else process.env.CODEX_HOME = originalCodexHome;
   if (originalCodexBinary === undefined)
@@ -104,6 +108,74 @@ describe("Codex Pi sibling account lanes", () => {
     });
     expect(JSON.stringify(reports)).not.toMatch(
       /personal-access-token|work-access-token/,
+    );
+  });
+
+  it("probes OMP only after every expanded Pi lane is rejected", async () => {
+    writePiAuth({
+      "openai-codex": piOauthEntry({
+        access: "rejected-personal-access-token",
+        accountId: "acct-personal",
+      }),
+      "openai-codex-work": piOauthEntry({
+        access: "rejected-work-access-token",
+        accountId: "acct-work",
+      }),
+    });
+    const order: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        const token = new Headers(init?.headers)
+          .get("authorization")
+          ?.replace(/^Bearer /, "");
+        order.push(token ?? "missing");
+        return token === "omp-access-token"
+          ? usage(35, "omp@example.invalid", "acct-omp")
+          : new Response("unauthorized", { status: 401 });
+      }),
+    );
+    const resolve = vi.fn(async () => {
+      order.push("omp-resolve");
+      return {
+        status: "available" as const,
+        credential: { accessToken: "omp-access-token", accountId: "acct-omp" },
+      };
+    });
+    const adapter = (
+      await import("../../src/providers/codex.js")
+    ).createCodexAdapter({
+      ompBroker: { resolve, inspect: async () => ({ status: "available" }) },
+    });
+    const reports = await fetchAccountQuotas(adapter, OPTIONS);
+
+    expect(order).toEqual([
+      "rejected-personal-access-token",
+      "rejected-personal-access-token",
+      "rejected-work-access-token",
+      "rejected-work-access-token",
+      "omp-resolve",
+      "omp-access-token",
+    ]);
+    expect(resolve).toHaveBeenCalledOnce();
+    expect(reports.map((report) => report.accountKey)).toEqual([
+      "openai-codex",
+      "openai-codex-work",
+      "omp:openai-codex",
+    ]);
+    expect(reports.slice(0, 2).map((report) => report.state.status)).toEqual([
+      "auth_required",
+      "auth_required",
+    ]);
+    expect(reports[2]).toMatchObject({
+      source: "omp:openai-codex",
+      accountKeys: ["omp:openai-codex"],
+      account: { accountId: "acct-omp" },
+      windows: [{ percentUsed: 35 }],
+      state: { status: "fresh" },
+    });
+    expect(JSON.stringify(reports)).not.toMatch(
+      /rejected-personal-access-token|rejected-work-access-token|omp-access-token/,
     );
   });
 
