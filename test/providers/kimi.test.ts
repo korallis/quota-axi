@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { describe, expect, it, vi } from "vitest";
@@ -124,6 +125,48 @@ describe("Kimi request transport", () => {
     expect(report.plan).toBeUndefined();
     expect(report.credits).toBeUndefined();
     expect(cliSource.resolve).not.toHaveBeenCalled();
+  });
+
+  it("uses the shared provider transport by default without replacing injected fetches", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalNoProxy = process.env.NO_PROXY;
+    const originalLowerNoProxy = process.env.no_proxy;
+    const capturedFetch = vi.fn(async () => new Response(null, { status: 503 }));
+    const request = vi.fn(async () => jsonResponse(SUCCESS_PAYLOAD));
+    globalThis.fetch = capturedFetch as typeof fetch;
+    process.env.NO_PROXY = "api.kimi.com";
+    process.env.no_proxy = "api.kimi.com";
+    try {
+      const adapter = createKimiAdapter({
+        broker: broker({ status: "missing" }),
+        cliCredentialSource: cliCredentialSource({ status: "missing" }),
+        ompBroker: {
+          resolve: async () => ({
+            status: "available",
+            credential: { accessToken: "synthetic-omp-access" },
+          }),
+          inspect: async () => ({ status: "available" }),
+        },
+        readCachedProvider: () => undefined,
+        deleteCachedProvider: () => undefined,
+        now: () => NOW,
+      });
+      globalThis.fetch = request as typeof fetch;
+      const report = await adapter.fetchQuota(OPTIONS);
+      expect(request).toHaveBeenCalledOnce();
+      expect(capturedFetch).not.toHaveBeenCalled();
+      expect(report).toMatchObject({
+        source: "omp:kimi-code",
+        state: { status: "fresh" },
+      });
+      expect(JSON.stringify(report)).not.toContain("synthetic-omp-access");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalNoProxy === undefined) delete process.env.NO_PROXY;
+      else process.env.NO_PROXY = originalNoProxy;
+      if (originalLowerNoProxy === undefined) delete process.env.no_proxy;
+      else process.env.no_proxy = originalLowerNoProxy;
+    }
   });
 
   it("sends a Pi OAuth access token as the bearer without touching the CLI", async () => {
@@ -1605,6 +1648,56 @@ describe("Kimi credential outcomes and cache policy", () => {
         sourcesTried: ["pi:kimi-coding", "kimi-code-cli", "cache"],
       },
     });
+  });
+
+  it("reuses only a matching OMP Kimi credential's stale quota", async () => {
+    const identity = "omp:kimi-code:identity:synthetic-account";
+    const matchingContext = createHash("sha256").update(identity).digest("hex");
+    const cached = { ...cachedQuota(), source: "omp:kimi-code" as const };
+    const readCachedProvider = vi.fn((contextId: string) =>
+      contextId === matchingContext ? cached : undefined,
+    );
+    const adapter = (cacheIdentity: string) =>
+      testAdapter({
+        broker: broker({ status: "missing" }),
+        cliCredentialSource: cliCredentialSource({ status: "missing" }),
+        ompBroker: {
+          resolve: async () => ({
+            status: "available",
+            credential: {
+              accessToken: "synthetic-omp-access",
+              cacheIdentity,
+            },
+          }),
+          inspect: async () => ({ status: "available" }),
+        },
+        fetch: vi.fn(async () => new Response(null, { status: 503 })),
+        readCachedProvider,
+      });
+
+    const stale = await adapter(identity).fetchQuota(OPTIONS);
+    expect(stale).toMatchObject({
+      source: "cache",
+      windows: cached.windows,
+      state: { status: "stale", error: "provider_unavailable" },
+    });
+    expect(readCachedProvider).toHaveBeenCalledWith(matchingContext);
+    const other = await adapter("omp:kimi-code:identity:other-account").fetchQuota(
+      OPTIONS,
+    );
+    expect(other).toMatchObject({
+      source: "unavailable",
+      windows: [],
+      state: { status: "error", stale: false, error: "provider_unavailable" },
+    });
+    expect(readCachedProvider).toHaveBeenCalledWith(
+      createHash("sha256")
+        .update("omp:kimi-code:identity:other-account")
+        .digest("hex"),
+    );
+    expect(JSON.stringify({ stale, other })).not.toContain(
+      "synthetic-omp-access",
+    );
   });
 
   it("uses stale cache for transient HTTP and parser failures", async () => {

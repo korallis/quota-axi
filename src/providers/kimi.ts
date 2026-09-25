@@ -14,6 +14,7 @@ import type {
   SourceAttempt,
 } from "../types.js";
 import { calendarMonthsBefore } from "../lib/time.js";
+import { providerFetch } from "../lib/http.js";
 import { VERSION } from "../version.js";
 import { servableStaleWindows, servableUntrustedWindowIds } from "./common.js";
 import { publishKimiReadingContextId } from "./kimi-cache-context.js";
@@ -143,7 +144,7 @@ export function createKimiAdapter(
     broker: createPiKimiCredentialBroker(),
     cliCredentialSource: createKimiCodeCliCredentialSource(),
     ompBroker: createOmpOAuthCredentialBroker("kimi-code"),
-    fetch: globalThis.fetch,
+    fetch: providerFetch,
     readCachedProvider: readCachedProviderFromDisk,
     deleteCachedProvider: deleteCachedProviderFromDisk,
     now: Date.now,
@@ -996,7 +997,7 @@ function staleKimiReport(
 ): ProviderQuota | undefined {
   if (
     cached.provider !== "kimi" ||
-    cached.source !== "api" ||
+    (cached.source !== "api" && cached.source !== "omp:kimi-code") ||
     cached.state.status !== "fresh" ||
     !cached.state.refreshedAt
   ) {
