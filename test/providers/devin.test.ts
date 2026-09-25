@@ -360,6 +360,75 @@ describe("Devin request transport", () => {
     expect(interpreted.quotaSemantics?.effectiveAvailability).toEqual([]);
   });
 
+  it.each([false, true])(
+    "reports OMP credit counts without planInfo only while the plan is current (expired: %s)",
+    async (expired) => {
+      const planEnd = NOW + (expired ? -3600_000 : 3600_000);
+      const planStatus = joinProto([
+        testProtoInt(6, 7),
+        testProtoInt(8, 14),
+        testProtoInt(5, 5),
+        testProtoInt(9, 9),
+        testProtoInt(7, 3),
+        testProtoInt(4, 4),
+        testProtoTimestamp(3, Math.floor(planEnd / 1000)),
+      ]);
+      const response = new Response(
+        joinProto([
+          testProtoMessage(1, joinProto([testProtoMessage(13, planStatus)])),
+        ]).buffer,
+        { status: 200, headers: { "content-type": "application/proto" } },
+      );
+      const report = await testAdapter({
+        sources: [createDevinEnvSource({})],
+        ompBroker: {
+          resolve: async () => ({
+            status: "available",
+            credential: { accessToken: SESSION_TOKEN },
+          }),
+        },
+        fetch: sequentialFetch([response]),
+      }).fetchQuota(OPTIONS);
+      expect(report.source).toBe("omp:devin");
+      expect(report.state).toMatchObject({
+        status: "fresh",
+        authStatus: "usable",
+      });
+      expect(report.windows).toEqual([]);
+      expect(report.credits?.buckets).toEqual(
+        expired
+          ? undefined
+          : [
+              {
+                id: "prompt",
+                used: 7,
+                available: 14,
+                unit: "credits",
+                resetsAt: new Date(planEnd).toISOString(),
+              },
+              {
+                id: "flow",
+                used: 5,
+                available: 9,
+                unit: "credits",
+                resetsAt: new Date(planEnd).toISOString(),
+              },
+              {
+                id: "flex",
+                used: 3,
+                available: 4,
+                unit: "credits",
+                resetsAt: new Date(planEnd).toISOString(),
+              },
+            ],
+      );
+      expect(
+        withQuotaSemantics(report, new Date(NOW).toISOString()).quotaSemantics
+          ?.effectiveAvailability,
+      ).toEqual([]);
+    },
+  );
+
   it.each([
     { id: "weekly", resetField: 18 },
     { id: "daily", resetField: 17 },
@@ -435,6 +504,39 @@ describe("Devin credential matrix", () => {
         },
       ],
     });
+  });
+
+  it("reports native credit counts without planInfo or a quota percentage", async () => {
+    const report = await testAdapter({
+      fetch: sequentialFetch([
+        jsonResponse({
+          userStatus: {
+            planStatus: {
+              usedPromptCredits: 7,
+              availablePromptCredits: 14,
+              usedFlowCredits: 5,
+              availableFlowCredits: 9,
+              usedFlexCredits: 3,
+              availableFlexCredits: 4,
+            },
+          },
+        }),
+      ]),
+    }).fetchQuota(OPTIONS);
+    expect(report.state).toMatchObject({
+      status: "fresh",
+      authStatus: "usable",
+    });
+    expect(report.windows).toEqual([]);
+    expect(report.credits?.buckets).toEqual([
+      { id: "prompt", used: 7, available: 14, unit: "credits" },
+      { id: "flow", used: 5, available: 9, unit: "credits" },
+      { id: "flex", used: 3, available: 4, unit: "credits" },
+    ]);
+    expect(
+      withQuotaSemantics(report, new Date(NOW).toISOString()).quotaSemantics
+        ?.effectiveAvailability,
+    ).toEqual([]);
   });
 
   it("omits expired native credit buckets without altering quota windows or overage balance", () => {

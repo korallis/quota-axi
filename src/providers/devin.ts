@@ -1417,7 +1417,7 @@ function creditsFromMicros(
   }
 
   const resetsAt = nonemptyString(planStatus.planEnd);
-  if (planInfo && (!resetsAt || Date.parse(resetsAt) > now)) {
+  if (!resetsAt || Date.parse(resetsAt) > now) {
     const buckets: NonNullable<
       NonNullable<NormalizedDevinPayload["credits"]>["buckets"]
     > = [];
@@ -1439,7 +1439,7 @@ function creditsFromMicros(
     ] as const) {
       const usedValue = integerValue(planStatus[usedKey]);
       const availableValue = integerValue(planStatus[availableKey]);
-      const limitValue = integerValue(planInfo[limitKey]);
+      const limitValue = integerValue(planInfo?.[limitKey]);
       const used = Math.max(0, usedValue ?? 0);
       const available = Math.max(0, availableValue ?? 0);
       const limit =
