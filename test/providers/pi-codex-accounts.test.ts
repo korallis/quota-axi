@@ -2096,6 +2096,55 @@ describe("Codex Pi sibling account lanes", () => {
     );
   });
 
+  it.each(["missing", "rejected", "rate_limited"] as const)(
+    "preserves paired single-winner keys after an OMP %s fallback",
+    async (outcome) => {
+      writeNativeAuth("rejected-native-token", "acct-a");
+      writePiAuth({
+        "openai-codex": piOauthEntry({
+          access: "rejected-pi-token",
+          accountId: "acct-a",
+        }),
+      });
+      const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) =>
+        new Headers(init?.headers).get("authorization") ===
+        "Bearer omp-access-token"
+          ? new Response(null, {
+              status: outcome === "rate_limited" ? 429 : 401,
+            })
+          : new Response(null, { status: 401 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const resolve = vi.fn(async () =>
+        outcome === "missing"
+          ? ({ status: "missing" } as const)
+          : ({
+              status: "available",
+              credential: { accessToken: "omp-access-token" },
+            } as const),
+      );
+      const adapter = (
+        await import("../../src/providers/codex.js")
+      ).createCodexAdapter({
+        ompBroker: {
+          resolve,
+          inspect: async () => ({ status: "missing" }),
+        },
+      });
+      const report = await adapter.fetchQuota(OPTIONS);
+
+      expect(resolve).toHaveBeenCalledOnce();
+      expect(report.accountKeys).toEqual(["codex-home", "openai-codex"]);
+      expect(report.state.status).toBe(
+        outcome === "rate_limited" ? "rate_limited" : "auth_required",
+      );
+      expect(report.source).not.toBe("omp:openai-codex");
+      expect(JSON.stringify(report)).not.toMatch(
+        /rejected-native-token|rejected-pi-token|omp-access-token/,
+      );
+    },
+  );
+
   it("pairs single-winner keys from the credentials used before either store changes during the request", async () => {
     for (const rewrittenStore of ["native", "pi"] as const) {
       writeNativeAuth("native-access-token", "acct-a");

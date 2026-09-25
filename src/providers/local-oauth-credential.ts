@@ -183,6 +183,9 @@ async function resolveOmpCredential(
     const DatabaseSync = loadDatabaseSync();
     const database = new DatabaseSync(path, { readOnly: true });
     try {
+      database.function("usable_refresh", (value: unknown) =>
+        Number(usableLiteralSecret(value) !== undefined),
+      );
       const row = database
         .prepare(
           `SELECT credential_type AS credentialType,
@@ -194,8 +197,7 @@ async function resolveOmpCredential(
                   json_extract(data, '$.projectId') AS projectId,
                   identity_key AS identityKey,
                   updated_at AS updatedAt,
-                  CASE WHEN json_type(data, '$.refresh') = 'text'
-                    THEN 1 ELSE 0 END AS hasRefresh
+                  usable_refresh(json_extract(data, '$.refresh')) AS hasRefresh
              FROM auth_credentials
             WHERE provider = ?
               AND credential_type = 'oauth'
@@ -254,6 +256,7 @@ type DatabaseSyncConstructor = new (
   prepare(sql: string): {
     get(...params: string[]): Record<string, unknown> | undefined;
   };
+  function(name: string, callback: (value: unknown) => number): void;
   close(): void;
 };
 

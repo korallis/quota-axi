@@ -120,6 +120,8 @@ export async function fetchQuotaWithRuntime(
 ): Promise<ProviderQuota> {
   const attempts: SourceAttempt[] = [{ source: "cli", status: "failed" }];
   let finalFailure: unknown;
+  let cliFailure: unknown;
+  let loopbackFailure: unknown;
 
   try {
     const quota = await fetchCliQuota(runtime);
@@ -138,6 +140,7 @@ export async function fetchQuotaWithRuntime(
     return provider;
   } catch (error) {
     finalFailure = error;
+    cliFailure = error;
     const skipped =
       error instanceof AgyUnavailableError || isMissingCommandError(error);
     attempts[0] = {
@@ -165,6 +168,7 @@ export async function fetchQuotaWithRuntime(
     });
     return provider;
   } catch (error) {
+    loopbackFailure = error;
     const skipped =
       error instanceof AgyUnavailableError || isMissingCommandError(error);
     if (attempts[0].status === "skipped") {
@@ -212,7 +216,6 @@ export async function fetchQuotaWithRuntime(
     }
   }
 
-  const finalError = errorMessage(finalFailure);
   const cached = readCachedProvider("agy");
   const cachedAttemptSource =
     cached?.source === "cli-rpc" ? "loopback" : cached?.source;
@@ -224,6 +227,15 @@ export async function fetchQuotaWithRuntime(
         attempt.status === "failed" &&
         attempt.error === "Antigravity sign-in required",
     );
+  if (
+    !cachedRejected &&
+    isDefinitiveAuthFailure(finalFailure) &&
+    attempts.at(-1)?.source === "omp:google-antigravity"
+  ) {
+    if (cached?.source === "cli") finalFailure = cliFailure;
+    if (cached?.source === "cli-rpc") finalFailure = loopbackFailure;
+  }
+  const finalError = errorMessage(finalFailure);
   if (cachedRejected) {
     try {
       deleteCachedProvider("agy");

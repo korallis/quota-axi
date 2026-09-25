@@ -171,6 +171,55 @@ describe("additional read-only OAuth credential stores", () => {
     });
   });
 
+  it.each([
+    { refresh: "", refreshable: false },
+    { refresh: "  ", refreshable: false },
+    { refresh: "$REF", refreshable: false },
+    { refresh: "prefix$REF", refreshable: false },
+    { refresh: "!command", refreshable: false },
+    { refresh: "line\nbreak", refreshable: false },
+    { refresh: "synthetic-refresh-secret", refreshable: true },
+  ])(
+    "classifies OMP refresh presence without disclosing it: %#",
+    async ({ refresh, refreshable }) => {
+      const home = temporaryDirectory();
+      const databasePath = join(home, ".omp", "agent", "agent.db");
+      mkdirSync(dirname(databasePath), { recursive: true });
+      const database = new DatabaseSync(databasePath);
+      database.exec(
+        "CREATE TABLE auth_credentials (id INTEGER PRIMARY KEY, provider TEXT NOT NULL, credential_type TEXT NOT NULL, data TEXT NOT NULL, disabled_cause TEXT, identity_key TEXT, updated_at TEXT)",
+      );
+      database
+        .prepare(
+          "INSERT INTO auth_credentials (provider, credential_type, data) VALUES ('anthropic', 'oauth', ?)",
+        )
+        .run(
+          JSON.stringify({
+            access: "synthetic-access-token",
+            refresh,
+            expires: Date.now() - 60_000,
+          }),
+        );
+      database.close();
+      process.env.HOME = home;
+
+      const broker = createOmpOAuthCredentialBroker("anthropic", {
+        environment: process.env,
+        homeDirectory: () => home,
+      });
+      const resolution = await broker.resolve();
+      expect(resolution).toMatchObject({
+        status: "expired",
+        refreshable,
+        credential: { accessToken: "synthetic-access-token" },
+      });
+      expect(JSON.stringify(resolution)).not.toContain(
+        refresh || "never-present",
+      );
+      expect(await broker.inspect()).toEqual({ status: "expired" });
+    },
+  );
+
   it("scopes non-native Claude cache identity to the answering account", async () => {
     const home = temporaryDirectory();
     process.env.HOME = home;

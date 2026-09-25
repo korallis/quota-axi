@@ -200,14 +200,20 @@ async function fetchSingleWinnerQuota(
       builtinResolution,
     },
   );
+  let result = report;
   if (report.state.status === "auth_required") {
     const ompReport = await fetchOmpCodexQuota(dependencies, report);
-    if (ompReport) return ompReport;
+    if (
+      ompReport?.source === "omp:openai-codex" &&
+      ompReport.state.status === "fresh"
+    )
+      return ompReport;
+    result = ompReport ?? report;
   }
-  const ownKeys = report.accountKeys ?? [];
+  const ownKeys = result.accountKeys ?? [];
   const pairedKeys = [CODEX_HOME_ACCOUNT_KEY, PI_CODEX_BUILTIN_ID];
   if (!ownKeys.some((key) => pairedKeys.includes(key))) {
-    return report;
+    return result;
   }
   const nativeStoredAccountId =
     nativeState.status === "available" || nativeState.status === "expired"
@@ -217,10 +223,10 @@ async function fetchSingleWinnerQuota(
     nativeStoredAccountId === undefined ||
     nativeStoredAccountId !== resolvedAccountId(builtinResolution)
   ) {
-    return report;
+    return result;
   }
   return {
-    ...report,
+    ...result,
     accountKeys: [...new Set([...ownKeys, ...pairedKeys])],
   };
 }

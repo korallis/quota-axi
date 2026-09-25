@@ -22,6 +22,7 @@ import {
 } from "../../src/lib/process.js";
 import { readCachedProvider, writeCachedProviders } from "../../src/cache.js";
 import {
+  AGY_NOT_RUNNING,
   fetchQuota,
   fetchQuotaWithRuntime,
   inspectAuthWithRuntime,
@@ -436,11 +437,15 @@ describe("Antigravity provider", () => {
         });
 
         expect(fetchMock).toHaveBeenCalledTimes(2);
-        expect(result.state).toMatchObject({
-          status: "auth_required",
-          error: "Antigravity sign-in required",
-        });
-        expect(result.windows).toEqual([]);
+        expect(result.state).toMatchObject(
+          source === "cli-rpc"
+            ? { status: "stale", stale: true, error: AGY_NOT_RUNNING }
+            : {
+                status: "auth_required",
+                error: "Antigravity sign-in required",
+              },
+        );
+        expect(result.windows).toHaveLength(source === "cli-rpc" ? 1 : 0);
         expect(result.attempts?.at(-1)).toMatchObject({
           source: "omp:google-antigravity",
           status: "failed",
@@ -453,6 +458,61 @@ describe("Antigravity provider", () => {
           "synthetic-antigravity-access",
         );
       }
+    },
+  );
+
+  it.each([
+    {
+      source: "cli" as const,
+      options: {
+        cliQuota: Object.assign(new Error("synthetic CLI timeout"), {
+          code: "ETIMEDOUT",
+        }),
+      },
+      error: "Antigravity CLI /quota timed out",
+    },
+    {
+      source: "cli-rpc" as const,
+      options: {
+        ps: "123 /Users/test/.local/bin/agy\n",
+        lsof: lsofFor(123, 64440),
+        requestJson: async () => {
+          throw new Error("ECONNRESET");
+        },
+      },
+      error: "ECONNRESET",
+    },
+  ])(
+    "keeps an uncertain $source cached reading despite OMP rejection",
+    async ({ source, options, error }) => {
+      const snapshot = cachedAgyQuota();
+      snapshot.source = source;
+      writeCachedProviders([snapshot]);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response(null, { status: 401 })),
+      );
+      const result = await fetchQuotaWithRuntime({
+        ...runtimeWith(options),
+        async resolveOmpAntigravity() {
+          return {
+            status: "available" as const,
+            credential: {
+              accessToken: "synthetic-antigravity-access",
+              projectId: "synthetic-project",
+            },
+          };
+        },
+      });
+
+      expect(result.state).toMatchObject({ status: "stale", error });
+      expect(result.source).toBe("cache");
+      expect(result.windows).toHaveLength(1);
+      expect(readCachedProvider("agy")?.source).toBe(source);
+      expect(result.attempts?.at(-1)).toMatchObject({
+        source: "omp:google-antigravity",
+        error: "Antigravity sign-in required",
+      });
     },
   );
 
