@@ -951,8 +951,7 @@ describe("Codex credential-state reporting", () => {
       "fetch",
       vi.fn(async () => new Response(null, { status: 401 })),
     );
-    const { createCodexAdapter } =
-      await import("../../src/providers/codex.js");
+    const { createCodexAdapter } = await import("../../src/providers/codex.js");
     const options = {
       allowKeychainPrompt: false,
       refreshCredentials: false,
