@@ -3,7 +3,7 @@ import * as http from "node:http";
 import * as https from "node:https";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { providerFetch } from "../lib/http.js";
+import { providerFetch, readBoundedResponseBody } from "../lib/http.js";
 import { deleteCachedProvider, readCachedProvider } from "../cache.js";
 import {
   currentUserProcessListArgs,
@@ -1327,15 +1327,13 @@ async function fetchOmpAntigravityQuota(
   refreshedAt: string;
 }> {
   if (resolution.status === "missing") throw new Error("credentials_missing");
-  if (resolution.status !== "available") {
+  if (resolution.status !== "available" && resolution.status !== "expired") {
     throw new Error(
-      resolution.status === "expired"
-        ? "credentials_expired"
-        : resolution.status === "unsupported"
-          ? "unsupported_credential_type"
-          : resolution.status === "invalid"
-            ? "credentials_invalid"
-            : "credential_resolution_failed",
+      resolution.status === "unsupported"
+        ? "unsupported_credential_type"
+        : resolution.status === "invalid"
+          ? "credentials_invalid"
+          : "credential_resolution_failed",
     );
   }
   const { accessToken, projectId, email } = resolution.credential;
@@ -1421,21 +1419,31 @@ async function requestOmpAntigravityJson(
       );
     }
     if (!response.ok) throw new AgyHttpError(response.status);
-    const declared = Number(response.headers.get("content-length"));
-    if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
-      throw new Error("Antigravity quota response too large");
-    }
-    let text: string;
+    let body: Uint8Array;
     try {
-      text = await response.text();
-    } catch {
-      throw new Error("Antigravity quota response unreadable");
-    }
-    if (Buffer.byteLength(text) > MAX_RESPONSE_BYTES) {
-      throw new Error("Antigravity quota response too large");
+      body = await readBoundedResponseBody(
+        response,
+        controller.signal,
+        (code) =>
+          code === "provider_timeout"
+            ? new AgyUnavailableError("Antigravity quota request timed out")
+            : new AgyMalformedResponseError(
+                code === "response_too_large"
+                  ? "Antigravity quota response too large"
+                  : "Antigravity quota response unreadable",
+              ),
+        MAX_RESPONSE_BYTES,
+      );
+    } catch (error) {
+      if (error instanceof AgyMalformedResponseError) throw error;
+      throw new AgyUnavailableError(
+        controller.signal.aborted
+          ? "Antigravity quota request timed out"
+          : "Antigravity quota response unreadable",
+      );
     }
     try {
-      return JSON.parse(text) as unknown;
+      return JSON.parse(Buffer.from(body).toString("utf8")) as unknown;
     } catch {
       throw new Error("Antigravity quota response malformed");
     }

@@ -309,6 +309,50 @@ describe("Antigravity provider", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["quota", "rejected"] as const)(
+    "probes a stored-expired OMP bearer before reporting %s",
+    async (outcome) => {
+      const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+        expect(new Headers(init?.headers).get("authorization")).toBe(
+          "Bearer synthetic-expired-access",
+        );
+        return outcome === "quota"
+          ? Response.json({
+              groups: [
+                {
+                  displayName: "Gemini",
+                  buckets: [{ bucketId: "gemini-5h", remainingFraction: 0.73 }],
+                },
+              ],
+            })
+          : new Response(null, { status: 401 });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const result = await fetchQuotaWithRuntime({
+        ...runtimeWith({}),
+        async resolveOmpAntigravity() {
+          return {
+            status: "expired" as const,
+            refreshable: true,
+            credential: {
+              accessToken: "synthetic-expired-access",
+              projectId: "synthetic-project",
+            },
+          };
+        },
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(outcome === "quota" ? 1 : 2);
+      expect(result.state.status).toBe(
+        outcome === "quota" ? "fresh" : "auth_required",
+      );
+      expect(result.windows).toHaveLength(outcome === "quota" ? 1 : 0);
+      if (outcome === "quota")
+        expect(result.source).toBe("omp:google-antigravity");
+      expect(JSON.stringify(result)).not.toContain("synthetic-expired-access");
+    },
+  );
+
   it("uses model quota data only when the OMP summary has no reported buckets", async () => {
     let request = 0;
     const fetchMock = vi.fn(async () => {
@@ -350,6 +394,111 @@ describe("Antigravity provider", () => {
     ]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it.each([
+    { stage: "summary", declared: false },
+    { stage: "summary", declared: true },
+    { stage: "models", declared: false },
+    { stage: "models", declared: true },
+  ])(
+    "bounds the $stage OMP response with declared length $declared",
+    async ({ stage, declared }) => {
+      let reads = 0;
+      let canceled = false;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string | URL | Request) => {
+          const requestedStage = String(url).endsWith(
+            "retrieveUserQuotaSummary",
+          )
+            ? "summary"
+            : "models";
+          if (requestedStage !== stage)
+            return Response.json(
+              requestedStage === "summary" ? { groups: [] } : { models: {} },
+            );
+          return new Response(
+            new ReadableStream({
+              pull(controller) {
+                reads += 1;
+                controller.enqueue(new Uint8Array(256 * 1024));
+              },
+              cancel() {
+                canceled = true;
+              },
+            }),
+            {
+              headers: declared
+                ? { "content-length": String(1024 * 1024 + 1) }
+                : {},
+            },
+          );
+        }),
+      );
+      const result = await fetchQuotaWithRuntime({
+        ...runtimeWith({}),
+        async resolveOmpAntigravity() {
+          return {
+            status: "available" as const,
+            credential: {
+              accessToken: "synthetic-antigravity-access",
+              projectId: "synthetic-project",
+            },
+          };
+        },
+      });
+      expect(result.state.status).toBe("error");
+      expect(result.windows).toEqual([]);
+      expect(canceled).toBe(true);
+      expect(reads).toBeLessThan(8);
+    },
+  );
+
+  it.each(["summary", "models"] as const)(
+    "keeps an OMP $stage body-read failure transient",
+    async (stage) => {
+      writeCachedProviders([cachedAgyQuota()]);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string | URL | Request) => {
+          const requestedStage = String(url).endsWith(
+            "retrieveUserQuotaSummary",
+          )
+            ? "summary"
+            : "models";
+          if (requestedStage !== stage)
+            return Response.json(
+              requestedStage === "summary" ? { groups: [] } : { models: {} },
+            );
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(new Error("private body failure"));
+              },
+            }),
+          );
+        }),
+      );
+      const result = await fetchQuotaWithRuntime({
+        ...runtimeWith({}),
+        async resolveOmpAntigravity() {
+          return {
+            status: "available" as const,
+            credential: {
+              accessToken: "synthetic-antigravity-access",
+              projectId: "synthetic-project",
+            },
+          };
+        },
+      });
+      expect(result.state).toMatchObject({
+        status: "stale",
+        error: "Antigravity quota response unreadable",
+      });
+      expect(result.windows).toHaveLength(1);
+      expect(JSON.stringify(result)).not.toContain("private body failure");
+    },
+  );
 
   it.each([
     {
