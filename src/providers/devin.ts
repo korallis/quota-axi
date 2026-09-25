@@ -1266,8 +1266,12 @@ export function normalizeDevinPayload(
     );
   if (
     quotaFields &&
+    planStatus &&
     planInfo?.billingStrategy === undefined &&
-    !hasPositiveReset
+    !hasPositiveReset &&
+    !["dailyQuotaRemainingPercent", "weeklyQuotaRemainingPercent"].some((key) =>
+      Object.hasOwn(planStatus, key),
+    )
   ) {
     throw new DevinFailure("schema_incomplete", { staleEligible: true });
   }
@@ -1300,9 +1304,7 @@ export function normalizeDevinPayload(
         candidate.hidden ||
         (!quotaPlan &&
           !hasOwnReset &&
-          !(
-            hasPositiveReset && Object.hasOwn(planStatus, candidate.percent)
-          )) ||
+          !Object.hasOwn(planStatus, candidate.percent)) ||
         (!hasOwnReset && !quotaFields)
       ) {
         continue;

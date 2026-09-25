@@ -706,6 +706,67 @@ describe("Devin credential matrix", () => {
     },
   );
 
+  it.each([
+    { billing: "absent", hidden: undefined, visible: true },
+    { billing: "non-quota", hidden: undefined, visible: true },
+    { billing: "non-quota", hidden: false, visible: true },
+    { billing: "non-quota", hidden: true, visible: false },
+  ])(
+    "reports a resetless daily percentage with $billing billing and hideDailyQuota $hidden",
+    ({ billing, hidden, visible }) => {
+      const payload = structuredClone(PRO) as {
+        userStatus: { planStatus: Record<string, unknown> };
+        planInfo?: Record<string, unknown>;
+      };
+      delete payload.userStatus.planStatus.weeklyQuotaRemainingPercent;
+      delete payload.userStatus.planStatus.weeklyQuotaResetAtUnix;
+      delete payload.userStatus.planStatus.dailyQuotaResetAtUnix;
+      payload.userStatus.planStatus.dailyQuotaRemainingPercent = 23;
+      if (billing === "absent") delete payload.planInfo;
+      else {
+        payload.planInfo = { billingStrategy: "BILLING_STRATEGY_ACU" };
+        if (hidden !== undefined) payload.planInfo.hideDailyQuota = hidden;
+      }
+
+      const normalized = normalizeDevinPayload(payload, NOW);
+      expect(normalized.windows.map((window) => window.id)).toEqual(
+        visible ? ["daily"] : [],
+      );
+      if (visible) {
+        expect(normalized.windows[0]).toMatchObject({
+          percentRemaining: 23,
+          percentUsed: 77,
+        });
+        expect(normalized.windows[0]).not.toHaveProperty("resetsAt");
+      }
+      expect(normalized.untrustedWindowIds).toEqual([]);
+    },
+  );
+
+  it("reports a resetless weekly percentage without planInfo", () => {
+    const normalized = normalizeDevinPayload(
+      { userStatus: { planStatus: { weeklyQuotaRemainingPercent: 31 } } },
+      NOW,
+    );
+    expect(normalized.windows).toMatchObject([
+      { id: "weekly", percentRemaining: 31, percentUsed: 69 },
+    ]);
+    expect(normalized.untrustedWindowIds).toEqual([]);
+  });
+
+  it("keeps a resetless invalid percentage untrusted without planInfo", () => {
+    const payload = {
+      userStatus: {
+        planStatus: { dailyQuotaRemainingPercent: 101 },
+      },
+    };
+    const normalized = normalizeDevinPayload(payload, NOW);
+    expect(normalized.windows).toMatchObject([{ id: "daily" }]);
+    expect(normalized.windows[0]).not.toHaveProperty("percentRemaining");
+    expect(normalized.windows[0]).not.toHaveProperty("percentUsed");
+    expect(normalized.untrustedWindowIds).toEqual(["daily"]);
+  });
+
   it("keeps a reset-only window untrusted instead of inventing zero", () => {
     const normalized = normalizeDevinPayload(EXHAUSTED, NOW);
     expect(normalized.windows.map((window) => window.id)).toEqual([
@@ -850,10 +911,12 @@ describe("Devin credential matrix", () => {
 
   it.each([
     [
-      "quota fields without reset evidence or billing strategy",
+      "reset-only quota fields without positive reset or billing strategy",
       (payload: DevinTestPayload) => {
         delete payload.planInfo.billingStrategy;
-        delete payload.userStatus.planStatus.dailyQuotaResetAtUnix;
+        delete payload.userStatus.planStatus.dailyQuotaRemainingPercent;
+        delete payload.userStatus.planStatus.weeklyQuotaRemainingPercent;
+        payload.userStatus.planStatus.dailyQuotaResetAtUnix = 0;
         delete payload.userStatus.planStatus.weeklyQuotaResetAtUnix;
       },
     ],
