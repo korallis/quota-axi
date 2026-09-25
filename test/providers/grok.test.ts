@@ -1761,9 +1761,15 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
     const interpreted = withQuotaSemantics(report, "2026-07-23T07:05:00.000Z");
 
     expect(report.source).toBe("omp:xai-oauth");
-    expect(report.state).toMatchObject({ status: "fresh", authStatus: "usable" });
+    expect(report.state).toMatchObject({
+      status: "fresh",
+      authStatus: "usable",
+    });
     expect(report.windows).toEqual([
-      expect.objectContaining({ id: "product:grok_build", percentRemaining: 0 }),
+      expect.objectContaining({
+        id: "product:grok_build",
+        percentRemaining: 0,
+      }),
     ]);
     expect(interpreted.quotaSemantics?.effectiveAvailability).toEqual([
       expect.objectContaining({

@@ -189,9 +189,10 @@ export function staleUnlessSignOut(
 
 /**
  * Serve a cached snapshot as a stale reading of the current failure, keeping
- * only the windows {@link servableStaleWindows} still allows. Returns
- * `undefined` when none survive, so the caller reports the failed read exactly
- * as it would with no cache at all.
+ * only the windows {@link servableStaleWindows} still allows. A Devin snapshot
+ * can survive without windows when it still carries usable credits. Otherwise
+ * returns `undefined` when no window survives, so the caller reports the
+ * failed read exactly as it would with no cache at all.
  */
 export function staleFromCache(
   cached: ProviderQuota,
