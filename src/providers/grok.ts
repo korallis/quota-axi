@@ -63,6 +63,15 @@ const GROK_PI_CREDENTIAL_RESOLUTION_ERROR =
 const MODEL_AUTH_ONLY_ERROR = "model_auth_only";
 const MODEL_AUTH_PROBE_LIVE = "model_auth_probe_live";
 const PI_QUOTA_NOT_NEEDED_ERROR = "quota_not_needed";
+const PRODUCT_NAMES: Record<number, { id: string; label: string }> = {
+  0: { id: "unspecified", label: "Other" },
+  1: { id: "api", label: "API" },
+  2: { id: "grok_build", label: "Grok Build" },
+  3: { id: "grok_plugins", label: "Grok Plugins" },
+  4: { id: "chat", label: "Chat" },
+  5: { id: "imagine", label: "Imagine" },
+  6: { id: "voice", label: "Voice" },
+};
 
 type GrokCredentials = {
   key: string;
@@ -313,7 +322,7 @@ async function fetchQuotaWithDependencies(
             label: "Grok",
             source: "omp:xai-oauth",
             account: quota.account,
-            windows: [{ ...creditsWindow, kind: "credits", label: "credits" }],
+            windows: quota.windows,
             credits: quota.credits,
             refreshedAt: quota.refreshedAt,
             sourcesTried: sourceNames(attempts),
@@ -935,14 +944,47 @@ export function normalizeGrokConsumerPayload(
     periodStart !== undefined &&
     resetsAt !== undefined;
 
+  const windowKind =
+    periodType === "weekly" || periodType === "monthly"
+      ? periodType
+      : "credits";
+  const windowLabel =
+    periodType === "weekly"
+      ? "week"
+      : periodType === "monthly"
+        ? "month"
+        : "credits";
+
   const windows: QuotaWindow[] = [];
   const sharedExplicit = floatAt(config, 1);
   if (sharedExplicit !== undefined || validCurrentPeriod) {
     const percentUsed = clampExactPercent(sharedExplicit ?? 0);
     windows.push({
       id: "credits",
-      label: "credits",
-      kind: "credits",
+      label: windowLabel,
+      kind: windowKind,
+      percentUsed,
+      percentRemaining: 100 - percentUsed,
+      ...(periodStart ? { startsAt: periodStart } : {}),
+      resetsAt,
+    });
+  }
+
+  for (const productPayload of messagesAt(config, 7)) {
+    const product = scanMessage(productPayload);
+    const explicit = floatAt(product, 2);
+    if (explicit === undefined && !validCurrentPeriod) continue;
+    const productNumber = safeNumber(varintAt(product, 1) ?? 0n);
+    if (productNumber === undefined) continue;
+    const productName = PRODUCT_NAMES[productNumber] ?? {
+      id: `unknown_${productNumber}`,
+      label: `Product ${productNumber}`,
+    };
+    const percentUsed = clampExactPercent(explicit ?? 0);
+    windows.push({
+      id: `product:${productName.id}`,
+      label: productName.label,
+      kind: windowKind,
       percentUsed,
       percentRemaining: 100 - percentUsed,
       ...(periodStart ? { startsAt: periodStart } : {}),

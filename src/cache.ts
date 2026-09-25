@@ -1063,12 +1063,55 @@ function normalizeCachedCredits(
   const remaining = numberValue(data.remaining);
   const unlimited = booleanValue(data.unlimited);
   const unit = literalValue(data.unit, ["usd", "cny", "credits"] as const);
-  if (remaining === undefined && unlimited === undefined && unit === undefined)
+  const buckets: NonNullable<ProviderQuota["credits"]>["buckets"] =
+    Array.isArray(data.buckets)
+      ? data.buckets.flatMap((rawBucket) => {
+          const bucket = objectValue(rawBucket);
+          if (!bucket) return [];
+          const id = literalValue(bucket.id, [
+            "prompt",
+            "flow",
+            "flex",
+          ] as const);
+          const used = numberValue(bucket.used);
+          const available = numberValue(bucket.available);
+          if (
+            !id ||
+            used === undefined ||
+            used < 0 ||
+            available === undefined ||
+            available < 0 ||
+            bucket.unit !== "credits"
+          )
+            return [];
+          const limit = numberValue(bucket.limit);
+          const startsAt = stringValue(bucket.startsAt);
+          const resetsAt = stringValue(bucket.resetsAt);
+          return [
+            {
+              id,
+              used,
+              available,
+              unit: "credits" as const,
+              ...(limit !== undefined && limit >= 0 ? { limit } : {}),
+              ...(startsAt ? { startsAt } : {}),
+              ...(resetsAt ? { resetsAt } : {}),
+            },
+          ];
+        })
+      : undefined;
+  if (
+    remaining === undefined &&
+    unlimited === undefined &&
+    unit === undefined &&
+    !buckets?.length
+  )
     return undefined;
   return {
     remaining,
     unlimited,
     unit,
+    ...(buckets?.length ? { buckets } : {}),
   };
 }
 

@@ -297,10 +297,28 @@ describe("Grok consumer quota parsing", () => {
     expect(result.windows).toEqual([
       {
         id: "credits",
-        label: "credits",
-        kind: "credits",
+        label: "week",
+        kind: "weekly",
         percentUsed: 18.25,
         percentRemaining: 81.75,
+        startsAt: "2026-07-20T20:00:00.000Z",
+        resetsAt: "2026-07-27T20:00:00.000Z",
+      },
+      {
+        id: "product:grok_build",
+        label: "Grok Build",
+        kind: "weekly",
+        percentUsed: 33.25,
+        percentRemaining: 66.75,
+        startsAt: "2026-07-20T20:00:00.000Z",
+        resetsAt: "2026-07-27T20:00:00.000Z",
+      },
+      {
+        id: "product:chat",
+        label: "Chat",
+        kind: "weekly",
+        percentUsed: 100,
+        percentRemaining: 0,
         startsAt: "2026-07-20T20:00:00.000Z",
         resetsAt: "2026-07-27T20:00:00.000Z",
       },
@@ -340,8 +358,17 @@ describe("Grok consumer quota parsing", () => {
     expect(result.windows).toEqual([
       {
         id: "credits",
-        label: "credits",
-        kind: "credits",
+        label: "week",
+        kind: "weekly",
+        percentUsed: 0,
+        percentRemaining: 100,
+        startsAt: "2026-07-20T20:00:00.000Z",
+        resetsAt: "2026-07-27T20:00:00.000Z",
+      },
+      {
+        id: "product:grok_build",
+        label: "Grok Build",
+        kind: "weekly",
         percentUsed: 0,
         percentRemaining: 100,
         startsAt: "2026-07-20T20:00:00.000Z",
@@ -351,11 +378,11 @@ describe("Grok consumer quota parsing", () => {
     expect(result.credits).toEqual({ remaining: 0, unit: "credits" });
   });
 
-  it("pins pre-existing behaviour: prepaid zero never bounds a live weekly window, whose kind and label come from the period", () => {
+  it("keeps the shared and product limits separate from prepaid balance", () => {
     const result = normalizeGrokConsumerPayload(
       consumerPayload({
-        percentUsed: 64,
-        products: [{ product: 2, usagePercent: 64 }],
+        percentUsed: 20,
+        products: [{ product: 2, usagePercent: 100 }],
         prepaid: 0,
       }),
     );
@@ -378,16 +405,27 @@ describe("Grok consumer quota parsing", () => {
     expect(result.windows).toEqual([
       expect.objectContaining({
         id: "credits",
-        label: "credits",
-        kind: "credits",
+        label: "week",
+        kind: "weekly",
+        percentRemaining: 80,
+      }),
+      expect.objectContaining({
+        id: "product:grok_build",
+        percentRemaining: 0,
       }),
     ]);
     expect(result.credits).toEqual({ remaining: 0, unit: "credits" });
     expect(report.quotaSemantics?.effectiveAvailability).toContainEqual(
       expect.objectContaining({
         scope: "all_products",
-        status: "known",
-        effectivePercentRemaining: 36,
+        effectivePercentRemaining: 80,
+      }),
+    );
+    expect(report.quotaSemantics?.effectiveAvailability).toContainEqual(
+      expect.objectContaining({
+        scope: "product:grok_build",
+        effectivePercentRemaining: 0,
+        boundedBy: ["credits", "product:grok_build"],
       }),
     );
   });
@@ -403,8 +441,13 @@ describe("Grok consumer quota parsing", () => {
     expect(result.windows).toEqual([
       expect.objectContaining({
         id: "credits",
-        label: "credits",
-        kind: "credits",
+        label: "month",
+        kind: "monthly",
+      }),
+      expect.objectContaining({
+        id: "product:unknown_99",
+        kind: "monthly",
+        percentRemaining: 87.5,
       }),
     ]);
   });
@@ -1656,6 +1699,39 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
     expect(JSON.stringify(result)).not.toContain("pi-xai-access-token-fixture");
     expect(JSON.stringify(result)).not.toContain(
       "pi-xai-refresh-token-fixture",
+    );
+  });
+
+  it("keeps product bounds on the OMP consumer-credits path", async () => {
+    const payload = consumerPayload({
+      percentUsed: 20,
+      products: [{ product: 2, usagePercent: 100 }],
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => grpcResponse(payload)),
+    );
+    const report = await createGrokAdapter({
+      ompBroker: {
+        resolve: async () => ({
+          status: "available",
+          credential: { accessToken: "synthetic-omp-access" },
+        }),
+        inspect: async () => ({ status: "available" }),
+      },
+    }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+    const interpreted = withQuotaSemantics(report, "2026-07-23T07:05:00.000Z");
+    expect(report.source).toBe("omp:xai-oauth");
+    expect(report.windows.map(({ id }) => id)).toEqual([
+      "credits",
+      "product:grok_build",
+    ]);
+    expect(interpreted.quotaSemantics?.effectiveAvailability).toContainEqual(
+      expect.objectContaining({
+        scope: "product:grok_build",
+        effectivePercentRemaining: 0,
+        boundedBy: ["credits", "product:grok_build"],
+      }),
     );
   });
 
@@ -2959,8 +3035,8 @@ describe("Grok CLI rendering regression", () => {
       windows: [
         {
           id: "credits",
-          label: "credits",
-          kind: "credits",
+          label: "week",
+          kind: "weekly",
           percentUsed: 0,
           percentRemaining: 100,
         },

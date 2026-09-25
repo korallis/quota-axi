@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LocalOAuthBroker } from "../../src/providers/local-oauth-credential.js";
 import { withQuotaSemantics } from "../../src/interpretation.js";
+import { renderQuotaToon } from "../../src/render.js";
 import { devinCacheContextId } from "../../src/providers/devin-cache-context.js";
 import {
   createDevinAdapter,
@@ -220,6 +221,30 @@ describe("Devin request transport", () => {
         ],
       });
       expect(JSON.stringify(report)).not.toContain(SESSION_TOKEN);
+      const interpreted = withQuotaSemantics(
+        report,
+        new Date(NOW).toISOString(),
+      );
+      for (const full of [false, true]) {
+        const toon = renderQuotaToon(
+          {
+            schemaVersion: 6,
+            generatedAt: new Date(NOW).toISOString(),
+            providers: [interpreted],
+          },
+          "quota-axi",
+          full,
+        );
+        for (const [id, used, available, limit] of [
+          ["prompt", 30, 70, 100],
+          ["flow", 20, 180, 200],
+          ["flex", 5, 45, 50],
+        ] as const) {
+          expect(toon).toContain(
+            `devin,"credits:${id}",credit_bucket,"used ${used} credits · available ${available} credits · limit ${limit} credits · starts 2026-09-01T00:00:00.000Z · resets 2026-10-01T00:00:00.000Z",none`,
+          );
+        }
+      }
 
       const [input, init] = request.mock.calls[0];
       expect(new URL(String(input)).href).toBe(

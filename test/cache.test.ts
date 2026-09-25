@@ -877,6 +877,34 @@ oauth_host = "https://auth.kimi.ai"
     expect(readCachedProvider("devin")?.windows[0].percentUsed).toBe(40);
   });
 
+  it("preserves Devin supplemental buckets across a same-context cache read", () => {
+    useTempCache();
+    const contextId = devinCacheContextId(
+      "env:WINDSURF_API_KEY",
+      "https://server.codeium.com",
+      "synthetic-devin-cache-key",
+    );
+    publishDevinReadingContextId(contextId);
+    const snapshot = quota("devin", 40);
+    snapshot.credits = {
+      buckets: [
+        { id: "prompt", used: 0, available: 70, unit: "credits", limit: 100 },
+        { id: "flow", used: 20, available: 180, unit: "credits" },
+        {
+          id: "flex",
+          used: 5,
+          available: 45,
+          unit: "credits",
+          resetsAt: "2026-10-01T00:00:00.000Z",
+        },
+      ],
+    };
+    writeCachedProviders([snapshot]);
+    expect(readCachedDevinProvider(contextId)?.credits).toEqual(
+      snapshot.credits,
+    );
+  });
+
   it("clears a Devin snapshot after an identified no-window report", () => {
     useTempCache();
     const contextId = devinCacheContextId(
