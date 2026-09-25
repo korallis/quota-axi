@@ -1103,7 +1103,7 @@ Provider tests use synthetic credential stores and mock Keychain, vendor-process
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the no-mistakes PR workflow, generated-file rules, and release-please conventions. Releases are cut by release-please from conventional commits on `main`. Merging the bot's release PR publishes to npm with OIDC trusted publishing (`id-token: write` and `--provenance`), not an `NPM_TOKEN` secret. Do not hand-edit `CHANGELOG.md` or `.release-please-manifest.json`, and do not retarget `release-please-config.json`'s `bootstrap-sha` unless the published baseline itself is being corrected. Every `pull_request` workflow `paths-ignore`s `.release-please-manifest.json`, `CHANGELOG.md`, and `package.json`, except `.github/workflows/no-mistakes-required.yml`, which carries no path filter because its verdict is a function of the PR body. `test/release-ci-exclusions.test.ts` guards both halves. That workflow is a thin caller of the shared `kunchenguid/no-mistakes` composite action, pinned to an immutable commit SHA and never `@main`. Change enforcement upstream, and bump the pin in a separate PR. This repository still owns that workflow's `on:`, `concurrency`, `permissions`, job name, and author-exemption `if:`. The trusted `.no-mistakes.yaml` leaves `allow_repo_commands` off so a pushed branch cannot supply executable `commands` or `agent`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the no-mistakes PR workflow, generated-file rules, and release-please conventions.
 
 ## License
 

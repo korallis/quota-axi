@@ -30,7 +30,7 @@ After a dependency change, run `pnpm exec prettier --write pnpm-lock.yaml`. Do n
 
 ## Release and the contribution gate
 
-[CONTRIBUTING.md](CONTRIBUTING.md) owns the contributor workflow. [README Contributing](README.md#contributing) states the release-please, OIDC publish, generated-file, `paths-ignore`, and no-mistakes pin rules. Do not retarget `bootstrap-sha` unless the published baseline itself is being corrected.
+[CONTRIBUTING.md](CONTRIBUTING.md) owns the contributor workflow, release-please, OIDC publish, generated-file, `paths-ignore`, and no-mistakes pin rules. Do not retarget `bootstrap-sha` unless the published baseline itself is being corrected.
 
 ## Maintaining this file
 
