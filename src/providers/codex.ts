@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { spawn } from "node:child_process";
 import {
+  codexStoredAccountId,
   retireCodexAccount,
   retireCachedSlot,
   readCachedCodexProvider,
@@ -433,9 +434,19 @@ async function fetchExpandedOmpQuota(
     dependencies,
     reports[reports.length - 1]!,
   );
+  const ompAccountId = fallback
+    ? (fallback.account?.accountId ?? codexStoredAccountId(fallback))
+    : undefined;
   if (
     fallback?.source === "omp:openai-codex" &&
-    fallback.state.status === "fresh"
+    fallback.state.status === "fresh" &&
+    (ompAccountId === undefined ||
+      !reports.some(
+        (report) =>
+          report.accountKeys?.includes(CODEX_HOME_ACCOUNT_KEY) &&
+          (report.account?.accountId ?? codexStoredAccountId(report)) ===
+            ompAccountId,
+      ))
   ) {
     return [
       ...reports,

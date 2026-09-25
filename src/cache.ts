@@ -180,6 +180,12 @@ export function stampCodexStoredAccountId(
     (provider as CodexStampedQuota)[CODEX_STORED_ACCOUNT_ID] = accountId;
 }
 
+export function codexStoredAccountId(
+  provider: ProviderQuota,
+): string | undefined {
+  return (provider as CodexStampedQuota)[CODEX_STORED_ACCOUNT_ID];
+}
+
 type ClaudeLocalStampedQuota = ProviderQuota & {
   [CLAUDE_LOCAL_CREDENTIAL_IDENTITY]?: string;
 };
