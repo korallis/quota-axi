@@ -466,7 +466,7 @@ async function fetchQuotaWithDependencies(
       label: "Grok",
       status: retryAfter
         ? "rate_limited"
-        : grokStatusForAuthFailure(finalError, authStatus),
+        : grokStatusForAuthFailure(finalError, authStatus ?? "unusable"),
       error: finalError,
       retryAfter,
       sourcesTried: sourceNames(attempts),
