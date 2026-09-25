@@ -423,7 +423,10 @@ async function fetchExpandedOmpQuota(
 ): Promise<ProviderQuota[]> {
   if (
     reports.length === 0 ||
-    reports.some((report) => report.state.status === "fresh")
+    reports.some(
+      (report) =>
+        report.source?.startsWith("pi:") && report.state.status === "fresh",
+    )
   )
     return reports;
   const fallback = await fetchOmpCodexQuota(

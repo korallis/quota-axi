@@ -200,6 +200,83 @@ describe("Codex Pi sibling account lanes", () => {
     },
   );
 
+  it.each([
+    { native: "oauth", piStatus: 401 },
+    { native: "cli-rpc", piStatus: 503 },
+  ] as const)(
+    "probes OMP despite a fresh $native lane beside a failed Pi lane",
+    async ({ native, piStatus }) => {
+      if (native === "oauth") {
+        writeNativeAuth("native-access-token", "acct-home");
+      } else {
+        mockCodexCli({ accountId: "acct-home", usedPercent: 20 });
+      }
+      writePiAuth({
+        "openai-codex-work": piOauthEntry({
+          access: "failed-pi-access-token",
+          accountId: "acct-work",
+        }),
+      });
+      const order: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url: unknown, init?: RequestInit) => {
+          const token = new Headers(init?.headers)
+            .get("authorization")
+            ?.replace(/^Bearer /, "");
+          order.push(token ?? "missing");
+          if (token === "native-access-token")
+            return usage(20, "home@example.invalid", "acct-home");
+          if (token === "omp-access-token")
+            return usage(35, "omp@example.invalid", "acct-omp");
+          return new Response(null, { status: piStatus });
+        }),
+      );
+      const resolve = vi.fn(async () => {
+        order.push("omp-resolve");
+        return {
+          status: "available" as const,
+          credential: { accessToken: "omp-access-token", accountId: "acct-omp" },
+        };
+      });
+      const adapter = (
+        await import("../../src/providers/codex.js")
+      ).createCodexAdapter({
+        ompBroker: { resolve, inspect: async () => ({ status: "available" }) },
+      });
+      const reports = await fetchAccountQuotas(adapter, OPTIONS);
+
+      expect(resolve).toHaveBeenCalledOnce();
+      expect(order.indexOf("failed-pi-access-token")).toBeLessThan(
+        order.indexOf("omp-resolve"),
+      );
+      expect(order.slice(-2)).toEqual(["omp-resolve", "omp-access-token"]);
+      expect(reports.map((report) => report.accountKey)).toEqual([
+        "codex-home",
+        "openai-codex-work",
+        "omp:openai-codex",
+      ]);
+      expect(reports[0]).toMatchObject({
+        source: native,
+        accountKeys: ["codex-home"],
+        state: { status: "fresh" },
+        windows: [{ percentUsed: 20 }],
+      });
+      expect(reports[1]).toMatchObject({
+        source: "pi:openai-codex-work",
+        accountKeys: ["openai-codex-work"],
+        windows: [],
+        state: { status: piStatus === 401 ? "auth_required" : "error" },
+      });
+      expect(reports[2]).toMatchObject({
+        source: "omp:openai-codex",
+        accountKeys: ["omp:openai-codex"],
+        state: { status: "fresh" },
+        windows: [{ percentUsed: 35 }],
+      });
+    },
+  );
+
   it.each([429, 401, 503])(
     "keeps Pi lanes unchanged when the expanded OMP fallback returns %i",
     async (ompStatus) => {
