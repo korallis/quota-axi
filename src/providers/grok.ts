@@ -382,11 +382,17 @@ async function fetchQuotaWithDependencies(
     );
   }
 
-  const authStatus = ompRefreshableExpiredRejected
-    ? "expired_refreshable"
-    : selection.outcome === "live_no_quota" || ompTransientError !== undefined
+  const localAuthStatus = classifyGrokAuthStatus(
+    cliState,
+    piResolution,
+    selection,
+  );
+  const authStatus =
+    localAuthStatus === "usable" || ompTransientError !== undefined
       ? "usable"
-      : classifyGrokAuthStatus(cliState, piResolution, selection);
+      : ompRefreshableExpiredRejected
+        ? "expired_refreshable"
+        : localAuthStatus;
 
   if (authStatus === "usable" || transientError !== undefined) {
     // Valid model auth (CLI and/or Pi) without consumer windows is not logout.
@@ -434,7 +440,9 @@ async function fetchQuotaWithDependencies(
   if (authStatus === "expired_refreshable") {
     finalError = hasRefreshableCliCandidate(cliState)
       ? GROK_ACCESS_TOKEN_EXPIRED_ERROR
-      : "Pi xAI access token expired";
+      : localAuthStatus === "expired_refreshable"
+        ? "Pi xAI access token expired"
+        : "OMP xAI access token expired";
   } else if (piResolution.status === "error") {
     finalError = GROK_PI_CREDENTIAL_RESOLUTION_ERROR;
   } else {

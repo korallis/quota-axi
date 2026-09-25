@@ -1735,6 +1735,86 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
     );
   });
 
+  it.each(["pi", "cli"] as const)(
+    "keeps $source live model auth when a separate expired OMP token is rejected",
+    async (source) => {
+      if (source === "pi") {
+        writePiXaiAuth({
+          xai: { type: "api_key", key: "pi-xai-api-key-fixture-value" },
+        });
+      } else {
+        writeAuth({
+          "https://auth.x.ai::fixture-client": {
+            key: "cli-model-token",
+            auth_mode: "oidc",
+            expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+          },
+        });
+      }
+      writeCachedProviders([cachedGrok("web")]);
+      const fetchMock = vi.fn(async (url: string) =>
+        url === GROK_BUILD_MODELS_URL
+          ? new Response(JSON.stringify({ data: [] }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            })
+          : grpcResponse(new Uint8Array(), { status: 403 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const report = await createGrokAdapter({
+        ompBroker: {
+          resolve: async () => ({
+            status: "expired",
+            credential: { accessToken: "expired-omp-token" },
+            refreshable: true,
+          }),
+          inspect: async () => ({ status: "expired" }),
+        },
+      }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+
+      expect(report).toMatchObject({
+        source: "unavailable",
+        windows: [],
+        state: {
+          status: "unavailable",
+          authStatus: "usable",
+          error: "Grok model access available; quota unavailable",
+        },
+      });
+      expect(report.attempts).toContainEqual(
+        expect.objectContaining({ source: "omp:xai-oauth", status: "failed" }),
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(source === "cli" ? 3 : 1);
+      expect(readCachedProvider("grok")?.windows[0]?.percentRemaining).toBe(80);
+      expect(JSON.stringify(report)).not.toContain("expired-omp-token");
+    },
+  );
+
+  it("names OMP-owned refreshable expiry without attributing it to Pi", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => grpcResponse(new Uint8Array(), { status: 403 })),
+    );
+    const report = await createGrokAdapter({
+      ompBroker: {
+        resolve: async () => ({
+          status: "expired",
+          credential: { accessToken: "expired-omp-token" },
+          refreshable: true,
+        }),
+        inspect: async () => ({ status: "expired" }),
+      },
+    }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+
+    expect(report.state).toMatchObject({
+      status: "unavailable",
+      authStatus: "expired_refreshable",
+      error: "OMP xAI access token expired",
+    });
+    expect(report.state.remedyCommand).toBeUndefined();
+    expect(JSON.stringify(report)).not.toContain("expired-omp-token");
+  });
+
   it.each([
     "timeout",
     "rate_limit",
