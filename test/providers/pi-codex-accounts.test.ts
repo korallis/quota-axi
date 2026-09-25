@@ -2097,7 +2097,7 @@ describe("Codex Pi sibling account lanes", () => {
   });
 
   it.each(["missing", "rejected", "rate_limited"] as const)(
-    "preserves paired single-winner keys after an OMP %s fallback",
+    "preserves paired account keys and Pi rejection after OMP %s",
     async (outcome) => {
       writeNativeAuth("rejected-native-token", "acct-a");
       writePiAuth({
@@ -2135,9 +2135,14 @@ describe("Codex Pi sibling account lanes", () => {
 
       expect(resolve).toHaveBeenCalledOnce();
       expect(report.accountKeys).toEqual(["codex-home", "openai-codex"]);
-      expect(report.state.status).toBe(
-        outcome === "rate_limited" ? "rate_limited" : "auth_required",
-      );
+      expect(report.state.status).toBe("auth_required");
+      if (outcome === "rate_limited") {
+        expect(report.attempts?.at(-1)).toMatchObject({
+          source: "omp:openai-codex",
+          status: "failed",
+          error: "Codex quota endpoint rate limited",
+        });
+      }
       expect(report.source).not.toBe("omp:openai-codex");
       expect(JSON.stringify(report)).not.toMatch(
         /rejected-native-token|rejected-pi-token|omp-access-token/,

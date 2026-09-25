@@ -20,7 +20,12 @@ import {
   currentUserProcessListArgs,
   type ExecFileTextOptions,
 } from "../../src/lib/process.js";
-import { readCachedProvider, writeCachedProviders } from "../../src/cache.js";
+import {
+  agyOmpCredentialContextId,
+  readCachedProvider,
+  stampAgyOmpCredentialContextId,
+  writeCachedProviders,
+} from "../../src/cache.js";
 import {
   AGY_NOT_RUNNING,
   fetchQuota,
@@ -547,6 +552,54 @@ describe("Antigravity provider", () => {
     },
   );
 
+  it("serves stale OMP quota only for the same OAuth credential", async () => {
+    const runtimeFor = (account: "A" | "B") => ({
+      ...runtimeWith({}),
+      async resolveOmpAntigravity() {
+        return {
+          status: "available" as const,
+          credential: {
+            accessToken: `synthetic-account-${account}-access`,
+            cacheIdentity: `synthetic-account-${account}`,
+            projectId: "synthetic-project",
+          },
+        };
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json(fixture("quota-summary.json"))),
+    );
+    const fresh = await fetchQuotaWithRuntime(runtimeFor("A"));
+    expect(fresh).toMatchObject({
+      source: "omp:google-antigravity",
+      state: { status: "fresh" },
+    });
+    const futureReset = new Date(Date.now() + 60 * 60 * 1_000).toISOString();
+    fresh.windows = fresh.windows.map((window) => ({
+      ...window,
+      resetsAt: futureReset,
+    }));
+    writeCachedProviders([fresh]);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 503 })),
+    );
+    const sameAccount = await fetchQuotaWithRuntime(runtimeFor("A"));
+    expect(sameAccount.state).toMatchObject({ status: "stale", stale: true });
+    expect(sameAccount.windows.length).toBeGreaterThan(0);
+
+    const otherAccount = await fetchQuotaWithRuntime(runtimeFor("B"));
+    expect(otherAccount.state.status).toBe("unavailable");
+    expect(otherAccount.state.stale).toBe(false);
+    expect(otherAccount.windows).toEqual([]);
+    expect(readCachedProvider("agy")?.source).toBe("omp:google-antigravity");
+    expect(JSON.stringify([fresh, sameAccount, otherAccount])).not.toMatch(
+      /synthetic-account-[AB]-access/,
+    );
+  });
+
   it.each([
     { summaryStatus: 429, modelsStatus: 401 },
     { summaryStatus: 401, modelsStatus: 503 },
@@ -568,8 +621,10 @@ describe("Antigravity provider", () => {
       );
       vi.stubGlobal("fetch", fetchMock);
       for (const source of ["cli-rpc", "omp:google-antigravity"] as const) {
-        const snapshot = cachedAgyQuota();
-        snapshot.source = source;
+        const snapshot =
+          source === "omp:google-antigravity"
+            ? cachedOmpAgyQuota()
+            : cachedAgyQuota();
         writeCachedProviders([snapshot]);
         fetchMock.mockClear();
         const result = await fetchQuotaWithRuntime({
@@ -1643,4 +1698,17 @@ function cachedAgyQuota(): ProviderQuota {
       sourcesTried: ["loopback"],
     },
   };
+}
+
+function cachedOmpAgyQuota(): ProviderQuota {
+  const snapshot = cachedAgyQuota();
+  snapshot.source = "omp:google-antigravity";
+  return stampAgyOmpCredentialContextId(
+    snapshot,
+    agyOmpCredentialContextId(
+      "https://daily-cloudcode-pa.googleapis.com",
+      undefined,
+      "synthetic-antigravity-access",
+    ),
+  );
 }

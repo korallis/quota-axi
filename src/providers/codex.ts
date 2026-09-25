@@ -195,21 +195,29 @@ async function fetchSingleWinnerQuota(
     dependencies,
     options,
     undefined,
-    {
-      nativeState,
-      builtinResolution,
-    },
+    { nativeState, builtinResolution },
   );
-  let result = report;
+  let ompReport: ProviderQuota | undefined;
   if (report.state.status === "auth_required") {
-    const ompReport = await fetchOmpCodexQuota(dependencies, report);
+    ompReport = await fetchOmpCodexQuota(dependencies, report);
     if (
       ompReport?.source === "omp:openai-codex" &&
       ompReport.state.status === "fresh"
     )
       return ompReport;
-    result = ompReport ?? report;
   }
+  const result = ompReport
+    ? {
+        ...report,
+        attempts: ompReport.attempts ?? report.attempts,
+        state: {
+          ...report.state,
+          ...(ompReport.state.sourcesTried
+            ? { sourcesTried: ompReport.state.sourcesTried }
+            : {}),
+        },
+      }
+    : report;
   const ownKeys = result.accountKeys ?? [];
   const pairedKeys = [CODEX_HOME_ACCOUNT_KEY, PI_CODEX_BUILTIN_ID];
   if (!ownKeys.some((key) => pairedKeys.includes(key))) {

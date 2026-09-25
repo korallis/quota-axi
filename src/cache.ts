@@ -75,12 +75,13 @@ const CREDENTIAL_CONTEXT_ID = /^[a-f0-9]{64}$/;
  * a Kimi Code `config.toml` selects the deployment, Command Code's `whoami`
  * identifies the source-plus-account pair, an ElevenLabs API key is itself the
  * account, MiniMax stamps by credential source plus deployment host, and a
- * Codex slot can be signed in to another ChatGPT account. A snapshot from one
- * such context says nothing about another, so each is stamped on write and
+ * Codex slot can be signed in to another ChatGPT account. Antigravity OMP
+ * snapshots are bound to the answering local OAuth credential. A snapshot from
+ * one such context says nothing about another, so each is stamped on write and
  * checked on stale reuse - strictly for Claude, Kimi, Command Code, MiniMax,
- * ElevenLabs, and Devin, whose identity a reading always has (and which skip
- * write and clear when that identity is missing). Codex can write an unstamped
- * snapshot, but stale reuse requires a matching stored account id.
+ * ElevenLabs, Devin, and Antigravity OMP. These sources skip writes and clears
+ * when identity is missing. Codex can write an unstamped snapshot, but stale
+ * reuse requires a matching stored account id.
  *
  * How that stamp is obtained is not the same question for each. A Claude
  * profile is fixed by this process's own environment, so deriving it here reads
@@ -112,6 +113,7 @@ const CONTEXT_SCOPED_PROVIDERS: Partial<
   devin: devinReadingContextId,
   codex: codexStampContextId,
   minimax: miniMaxReadingContextId,
+  agy: agyOmpStampContextId,
 };
 
 /**
@@ -124,6 +126,47 @@ const CODEX_STORED_ACCOUNT_ID = Symbol("codexStoredAccountId");
 const CLAUDE_LOCAL_CREDENTIAL_IDENTITY = Symbol(
   "claudeLocalCredentialIdentity",
 );
+
+const AGY_OMP_CREDENTIAL_CONTEXT_ID = Symbol("agyOmpCredentialContextId");
+
+type AgyOmpStampedQuota = ProviderQuota & {
+  [AGY_OMP_CREDENTIAL_CONTEXT_ID]?: string;
+};
+
+export function agyOmpCredentialContextId(
+  origin: string,
+  credentialIdentity: string | undefined,
+  accessToken: string,
+): string {
+  const accessTokenDigest = createHash("sha256")
+    .update(accessToken)
+    .digest("hex");
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        "agy-omp-credential-v1",
+        origin,
+        credentialIdentity,
+        accessTokenDigest,
+      ]),
+    )
+    .digest("hex");
+}
+
+export function stampAgyOmpCredentialContextId(
+  provider: ProviderQuota,
+  contextId: string | undefined,
+): ProviderQuota {
+  if (contextId)
+    (provider as AgyOmpStampedQuota)[AGY_OMP_CREDENTIAL_CONTEXT_ID] = contextId;
+  return provider;
+}
+
+function agyOmpStampContextId(provider: ProviderQuota): string | undefined {
+  return provider.source === "omp:google-antigravity"
+    ? (provider as AgyOmpStampedQuota)[AGY_OMP_CREDENTIAL_CONTEXT_ID]
+    : undefined;
+}
 
 type CodexStampedQuota = ProviderQuota & {
   [CODEX_STORED_ACCOUNT_ID]?: string;
@@ -529,6 +572,27 @@ export function readCachedDevinProvider(
   return readCachedProviderInContext("devin", contextId);
 }
 
+/**
+ * OMP Antigravity stale quota requires the same OAuth credential identity.
+ * Native CLI and loopback snapshots retain their separate source behavior.
+ */
+export function readCachedAgyProvider(
+  contextId: string | undefined,
+): ProviderQuota | undefined {
+  const record = readCachedRecord("agy");
+  if (!record) return undefined;
+  if (
+    record.snapshot.source === "omp:google-antigravity" &&
+    (!contextId || record.credentialContextId !== contextId)
+  )
+    return undefined;
+  const snapshot = servableCachedSnapshot(record.snapshot, Date.now());
+  return snapshot &&
+    hasCachedMeasure(snapshot.provider, snapshot.windows, snapshot.credits)
+    ? snapshot
+    : undefined;
+}
+
 function readCachedProviderInContext(
   provider: ProviderId,
   contextId: string,
@@ -567,7 +631,7 @@ export function writeCachedProviders(
             provider.windows,
             provider.credits,
           ) &&
-          !missingRequiredContext(provider.provider),
+          !missingRequiredContext(provider),
       )
       .map(cacheIdentity),
   );
@@ -825,28 +889,31 @@ function toCacheProvider(provider: ProviderQuota): CachedProvider | undefined {
   )?.snapshot;
   if (!snapshot) return undefined;
   const contextId = CONTEXT_SCOPED_PROVIDERS[provider.provider]?.(provider);
-  // Claude, Kimi, Command Code, MiniMax, ElevenLabs, and Devin require a published
-  // identity; Codex stamps are optional at write time, but an unstamped
-  // snapshot cannot be served as stale.
-  if (
+  // Codex stamps are optional. Native Antigravity sources remain unscoped;
+  // OMP Antigravity and the other context-scoped sources require an identity.
+  const requiresContext =
     provider.provider !== "codex" &&
-    CONTEXT_SCOPED_PROVIDERS[provider.provider] &&
-    !contextId
-  )
-    return undefined;
+    CONTEXT_SCOPED_PROVIDERS[provider.provider] !== undefined &&
+    !(
+      provider.provider === "agy" &&
+      provider.source !== "omp:google-antigravity"
+    );
+  if (requiresContext && !contextId) return undefined;
   return {
     snapshot,
     ...(contextId ? { credentialContextId: contextId } : {}),
   };
 }
 
-function missingRequiredContext(provider: ProviderId): boolean {
-  // Codex stamps are optional; Claude, Kimi, Command Code, MiniMax, ElevenLabs,
-  // and Devin must
-  // not clear when the current reading has no published context identity.
-  if (provider === "codex") return false;
-  const scope = CONTEXT_SCOPED_PROVIDERS[provider];
-  return scope !== undefined && !scope({ provider } as ProviderQuota);
+function missingRequiredContext(provider: ProviderQuota): boolean {
+  if (provider.provider === "codex") return false;
+  if (
+    provider.provider === "agy" &&
+    provider.source !== "omp:google-antigravity"
+  )
+    return false;
+  const scope = CONTEXT_SCOPED_PROVIDERS[provider.provider];
+  return scope !== undefined && !scope(provider);
 }
 
 function serializeCachedProvider(

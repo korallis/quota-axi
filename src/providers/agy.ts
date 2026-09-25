@@ -4,7 +4,12 @@ import * as https from "node:https";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { providerFetch, readBoundedResponseBody } from "../lib/http.js";
-import { deleteCachedProvider, readCachedProvider } from "../cache.js";
+import {
+  agyOmpCredentialContextId,
+  deleteCachedProvider,
+  readCachedAgyProvider,
+  stampAgyOmpCredentialContextId,
+} from "../cache.js";
 import {
   currentUserProcessListArgs,
   execFileText,
@@ -122,6 +127,7 @@ export async function fetchQuotaWithRuntime(
   let finalFailure: unknown;
   let cliFailure: unknown;
   let loopbackFailure: unknown;
+  let ompContextId: string | undefined;
 
   try {
     const quota = await fetchCliQuota(runtime);
@@ -187,6 +193,16 @@ export async function fetchQuotaWithRuntime(
   if (runtime.resolveOmpAntigravity) {
     const resolution = await runtime.resolveOmpAntigravity();
     if (resolution.status !== "missing") {
+      if (
+        resolution.status === "available" ||
+        resolution.status === "expired"
+      ) {
+        ompContextId = agyOmpCredentialContextId(
+          OMP_ANTIGRAVITY_BASE_URL,
+          resolution.credential.cacheIdentity,
+          resolution.credential.accessToken,
+        );
+      }
       attempts.push({ source: "omp:google-antigravity", status: "failed" });
       try {
         const quota = await fetchOmpAntigravityQuota(resolution);
@@ -194,16 +210,19 @@ export async function fetchQuotaWithRuntime(
           source: "omp:google-antigravity",
           status: "success",
         };
-        return successProvider({
-          provider: "agy",
-          label: "Antigravity",
-          source: "omp:google-antigravity",
-          account: quota.account,
-          windows: quota.windows,
-          refreshedAt: quota.refreshedAt,
-          sourcesTried: sourceNames(attempts),
-          attempts,
-        });
+        return stampAgyOmpCredentialContextId(
+          successProvider({
+            provider: "agy",
+            label: "Antigravity",
+            source: "omp:google-antigravity",
+            account: quota.account,
+            windows: quota.windows,
+            refreshedAt: quota.refreshedAt,
+            sourcesTried: sourceNames(attempts),
+            attempts,
+          }),
+          ompContextId,
+        );
       } catch (error) {
         const message = errorMessage(error);
         finalFailure = error;
@@ -216,7 +235,7 @@ export async function fetchQuotaWithRuntime(
     }
   }
 
-  const cached = readCachedProvider("agy");
+  const cached = readCachedAgyProvider(ompContextId);
   const cachedAttemptSource =
     cached?.source === "cli-rpc" ? "loopback" : cached?.source;
   const cachedRejected =

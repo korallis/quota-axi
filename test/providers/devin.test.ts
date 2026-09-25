@@ -440,11 +440,10 @@ describe("Devin request transport", () => {
     { id: "weekly", resetField: 18 },
     { id: "daily", resetField: 17 },
   ] as const)(
-    "defaults only the $id window to proto3 zero when its reset is present",
+    "keeps the $id reset without inventing a percentage",
     async ({ id, resetField }) => {
-      const planStatus = joinProto([
-        testProtoInt(resetField, Math.floor(NOW / 1000) + 3600),
-      ]);
+      const resetAt = Math.floor(NOW / 1000) + 3600;
+      const planStatus = joinProto([testProtoInt(resetField, resetAt)]);
       const response = new Response(
         joinProto([
           testProtoMessage(1, joinProto([testProtoMessage(13, planStatus)])),
@@ -464,8 +463,14 @@ describe("Devin request transport", () => {
       }).fetchQuota(OPTIONS);
       expect(report.source).toBe("omp:devin");
       expect(report.windows).toEqual([
-        expect.objectContaining({ id, percentRemaining: 0 }),
+        expect.objectContaining({
+          id,
+          resetsAt: new Date(resetAt * 1000).toISOString(),
+        }),
       ]);
+      expect(report.windows[0]).not.toHaveProperty("percentRemaining");
+      expect(report.windows[0]).not.toHaveProperty("percentUsed");
+      expect(report.state.untrustedWindowIds).toContain(id);
     },
   );
 
@@ -637,24 +642,51 @@ describe("Devin credential matrix", () => {
     });
   });
 
-  it("treats a missing percent with a present reset as proto3 zero", () => {
+  it.each([
+    { flag: "omitted", value: undefined, visible: true },
+    { flag: "false", value: false, visible: true },
+    { flag: "true", value: true, visible: false },
+  ])(
+    "uses the daily percentage when hideDailyQuota is $flag",
+    ({ value, visible }) => {
+      const payload = structuredClone(PRO) as DevinTestPayload;
+      const status = payload.userStatus.planStatus;
+      status.dailyQuotaRemainingPercent = 23;
+      delete status.dailyQuotaResetAtUnix;
+      if (value === undefined) delete payload.planInfo.hideDailyQuota;
+      else payload.planInfo.hideDailyQuota = value;
+
+      const normalized = normalizeDevinPayload(payload, NOW);
+      expect(normalized.windows.map((window) => window.id)).toEqual(
+        visible ? ["weekly", "daily"] : ["weekly"],
+      );
+      if (visible) {
+        expect(
+          normalized.windows.find((window) => window.id === "daily"),
+        ).toMatchObject({ percentRemaining: 23, percentUsed: 77 });
+      }
+      expect(normalized.untrustedWindowIds).toEqual([]);
+    },
+  );
+
+  it("keeps a reset-only window untrusted instead of inventing zero", () => {
     const normalized = normalizeDevinPayload(EXHAUSTED, NOW);
-    expect(normalized.windows).toEqual([
-      { ...WEEKLY, percentRemaining: 0, percentUsed: 100 },
-      { ...DAILY, percentRemaining: 25, percentUsed: 75 },
+    expect(normalized.windows.map((window) => window.id)).toEqual([
+      "weekly",
+      "daily",
     ]);
-    const interpreted = withQuotaSemantics(
-      {
-        provider: "devin",
-        windows: normalized.windows,
-        state: { status: "fresh", stale: false },
-      },
-      new Date(NOW).toISOString(),
-    );
+    expect(normalized.windows[0]).toMatchObject({ id: "weekly" });
+    expect(normalized.windows[0]).not.toHaveProperty("percentRemaining");
+    expect(normalized.windows[0]).not.toHaveProperty("percentUsed");
+    expect(normalized.untrustedWindowIds).toEqual(["weekly"]);
+    expect(interpretNormalized(normalized).quotaSemantics).toMatchObject({
+      status: "partial",
+      unresolvedWindowIds: ["weekly"],
+    });
     expect(
-      interpreted.quotaSemantics?.effectiveAvailability[0]
+      interpretNormalized(normalized).quotaSemantics?.effectiveAvailability[0]
         ?.effectivePercentRemaining,
-    ).toBe(0);
+    ).toBeUndefined();
   });
 
   it("names a missing daily cap as untrusted instead of letting weekly alone bind", () => {

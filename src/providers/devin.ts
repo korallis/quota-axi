@@ -1304,15 +1304,6 @@ export function normalizeDevinPayload(
       ) {
         continue;
       }
-      if (
-        candidate.id === "daily" &&
-        quotaPlan &&
-        planInfo?.hideDailyQuota === undefined &&
-        !hasPositiveReset
-      ) {
-        untrustedWindowIds.push("daily");
-        continue;
-      }
       expectedCount += 1;
       const window = normalizeQuotaWindow(
         planStatus,
@@ -1365,11 +1356,10 @@ function normalizeQuotaWindow(
     : undefined;
   // A reset the vendor says has already passed belongs to a finished cycle.
   if (resetsAt && Date.parse(resetsAt) <= now) return undefined;
-  if (hasPercent && percent === undefined) {
+  if (!hasPercent && !resetsAt) return undefined;
+  if (percent === undefined) {
     return windowWithoutPercent(id, label, kind, windowSeconds, resetsAt);
   }
-  if (!hasPercent && !resetsAt) return undefined;
-  const percentRemaining = percent ?? 0;
   const startsAt = resetsAt
     ? new Date(Date.parse(resetsAt) - windowSeconds * 1000).toISOString()
     : undefined;
@@ -1377,8 +1367,8 @@ function normalizeQuotaWindow(
     id,
     label,
     kind,
-    percentRemaining,
-    percentUsed: 100 - percentRemaining,
+    percentRemaining: percent,
+    percentUsed: 100 - percent,
     windowSeconds,
     ...(startsAt ? { startsAt } : {}),
     ...(resetsAt ? { resetsAt } : {}),
