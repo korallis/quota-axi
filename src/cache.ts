@@ -275,7 +275,7 @@ export function readReusableProviders(
   if (inputsDigest(stamp.inputs) !== stamp.inputsDigest) return undefined;
   return group
     .sort((a, b) => (a.reuse?.lane ?? 0) - (b.reuse?.lane ?? 0))
-    .map(reusedReading);
+    .map((record) => reusedReading(record, now));
 }
 
 /**
@@ -323,7 +323,7 @@ export function readSnapshotProviders(
   );
   if (records.length === 0) return undefined;
   if (!records.every((record) => stillCurrent(record, now))) return "expired";
-  return records.map(reusedReading);
+  return records.map((record) => reusedReading(record, now));
 }
 
 /** Whether no window of this reading has reached its own reported reset. */
@@ -334,8 +334,9 @@ function stillCurrent(record: CachedProvider, now: number): boolean {
   );
 }
 
-function reusedReading(record: CachedProvider): ProviderQuota {
-  const { snapshot, reuse } = record;
+function reusedReading(record: CachedProvider, now: number): ProviderQuota {
+  const { reuse } = record;
+  const snapshot = servableCachedSnapshot(record.snapshot, now);
   return {
     ...snapshot,
     ...(reuse?.accountKeys ? { accountKeys: [...reuse.accountKeys] } : {}),
@@ -361,7 +362,31 @@ export function readCachedProvider(
   provider: ProviderId,
   accountKey?: string,
 ): ProviderQuota | undefined {
-  return readCachedRecord(provider, accountKey)?.snapshot;
+  const record = readCachedRecord(provider, accountKey);
+  return record
+    ? servableCachedSnapshot(record.snapshot, Date.now())
+    : undefined;
+}
+
+function servableCachedSnapshot(
+  snapshot: ProviderQuota,
+  now: number,
+): ProviderQuota {
+  if (snapshot.provider !== "devin" || !snapshot.credits?.buckets?.length)
+    return snapshot;
+  const buckets = snapshot.credits.buckets.filter(
+    (bucket) => !bucket.resetsAt || Date.parse(bucket.resetsAt) > now,
+  );
+  if (buckets.length === snapshot.credits.buckets.length) return snapshot;
+  const credits = { ...snapshot.credits };
+  if (buckets.length > 0) credits.buckets = buckets;
+  else delete credits.buckets;
+  return {
+    ...snapshot,
+    credits: Object.values(credits).some((value) => value !== undefined)
+      ? credits
+      : undefined,
+  };
 }
 
 function readCachedRecord(
@@ -479,11 +504,14 @@ function readCachedProviderInContext(
   contextId: string,
 ): ProviderQuota | undefined {
   if (!CREDENTIAL_CONTEXT_ID.test(contextId)) return undefined;
-  return readCacheProviders().find(
+  const record = readCacheProviders().find(
     (item) =>
       item.snapshot.provider === provider &&
       item.credentialContextId === contextId,
-  )?.snapshot;
+  );
+  return record
+    ? servableCachedSnapshot(record.snapshot, Date.now())
+    : undefined;
 }
 
 export function writeCachedProviders(

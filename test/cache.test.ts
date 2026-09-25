@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   deleteCachedProvider,
   readCachedClaudeProvider,
@@ -18,12 +18,16 @@ import {
   readCachedDevinProvider,
   readCachedMiniMaxProvider,
   readCachedProvider,
+  readReusableProviders,
+  readSnapshotProviders,
   retireCodexAccount,
   writeCachedProviders,
   stampCodexStoredAccountId,
+  stampReadingInputs,
 } from "../src/cache.js";
 import { annotateQuotaAdvice } from "../src/advice.js";
 import { cacheFilePath, claudeCredentialContextId } from "../src/lib/fs.js";
+import { inputsDigest } from "../src/lib/input-trace.js";
 import {
   clearCommandCodeReadingContextId,
   commandCodeCacheContextId,
@@ -895,7 +899,7 @@ oauth_host = "https://auth.kimi.ai"
           used: 5,
           available: 45,
           unit: "credits",
-          resetsAt: "2026-10-01T00:00:00.000Z",
+          resetsAt: new Date(Date.now() + 60_000).toISOString(),
         },
       ],
     };
@@ -903,6 +907,121 @@ oauth_host = "https://auth.kimi.ai"
     expect(readCachedDevinProvider(contextId)?.credits).toEqual(
       snapshot.credits,
     );
+  });
+
+  it("omits elapsed Devin credit buckets on stale, fresh reuse, and snapshot reads without dropping windows", () => {
+    useTempCache();
+    const contextId = devinCacheContextId(
+      "env:WINDSURF_API_KEY",
+      "https://server.codeium.com",
+      "synthetic-devin-cache-key",
+    );
+    publishDevinReadingContextId(contextId);
+    const before = Date.parse("2026-07-06T18:10:30Z");
+    const after = Date.parse("2026-07-06T18:10:45Z");
+    const reset = "2026-07-06T18:10:40.000Z";
+    const snapshot = quota("devin", 40);
+    snapshot.windows[0].resetsAt = "2026-07-06T19:00:00.000Z";
+    snapshot.credits = {
+      remaining: 5,
+      unit: "usd",
+      buckets: [
+        {
+          id: "prompt",
+          used: 10,
+          available: 90,
+          unit: "credits",
+          resetsAt: reset,
+        },
+        {
+          id: "flow",
+          used: 20,
+          available: 80,
+          unit: "credits",
+          resetsAt: "2026-07-06T19:00:00.000Z",
+        },
+        { id: "flex", used: 30, available: 70, unit: "credits" },
+      ],
+    };
+    stampReadingInputs(snapshot, { paths: [], digest: inputsDigest([]) });
+    writeCachedProviders([snapshot], "2026-07-06T18:10:00Z");
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(before);
+      expect(readCachedDevinProvider(contextId)?.credits?.buckets).toHaveLength(
+        3,
+      );
+      expect(
+        readReusableProviders("devin", 120, before)?.[0].credits?.buckets,
+      ).toHaveLength(3);
+      expect(
+        readSnapshotProviders(cacheFilePath(), "devin", before),
+      ).toMatchObject([{ credits: { buckets: snapshot.credits?.buckets } }]);
+
+      vi.setSystemTime(after);
+      const cached = readCachedDevinProvider(contextId);
+      expect(cached?.windows[0].percentUsed).toBe(40);
+      expect(cached?.credits).toEqual({
+        remaining: 5,
+        unit: "usd",
+        buckets: snapshot.credits?.buckets?.slice(1),
+      });
+      expect(readCachedProvider("devin")?.credits?.buckets).toEqual(
+        snapshot.credits?.buckets?.slice(1),
+      );
+      expect(
+        staleFromCache(cached!, "request_timeout", ["api"], [], after)?.credits,
+      ).toEqual(cached?.credits);
+      const reused = readReusableProviders("devin", 120, after);
+      expect(reused?.[0].state.reused).toBe(true);
+      expect(reused?.[0].windows[0].percentUsed).toBe(40);
+      expect(reused?.[0].credits).toEqual(cached?.credits);
+      expect(
+        readSnapshotProviders(cacheFilePath(), "devin", after),
+      ).toMatchObject([
+        { credits: cached?.credits, windows: [{ percentUsed: 40 }] },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops a bucket-only cached balance once its reported plan period ends", () => {
+    useTempCache();
+    const contextId = devinCacheContextId(
+      "env:WINDSURF_API_KEY",
+      "https://server.codeium.com",
+      "synthetic-devin-cache-key",
+    );
+    publishDevinReadingContextId(contextId);
+    const snapshot = quota("devin", 40);
+    snapshot.windows[0].resetsAt = "2026-07-06T19:00:00.000Z";
+    snapshot.credits = {
+      buckets: [
+        {
+          id: "prompt",
+          used: 10,
+          available: 90,
+          unit: "credits",
+          resetsAt: "2026-07-06T18:10:40.000Z",
+        },
+      ],
+    };
+    writeCachedProviders([snapshot]);
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(Date.parse("2026-07-06T18:10:45Z"));
+      const cached = readCachedDevinProvider(contextId);
+      expect(cached?.windows[0].percentUsed).toBe(40);
+      expect(cached?.credits).toBeUndefined();
+      expect(
+        staleFromCache(cached!, "request_timeout", ["api"], [], Date.now())
+          ?.credits,
+      ).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("clears a Devin snapshot after an identified no-window report", () => {
