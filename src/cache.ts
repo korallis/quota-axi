@@ -322,18 +322,23 @@ export function readSnapshotProviders(
     (record) => record.snapshot.provider === provider,
   );
   if (records.length === 0) return undefined;
-  if (!records.every((record) => stillCurrent(record, now))) return "expired";
-  return records.map((record) => reusedReading(record, now));
+  if (!records.every((record) => stillCurrent(record, now, false)))
+    return "expired";
+  return records.map((record) => reusedReading(record, now, false));
 }
 
 /** Whether no window of this reading has reached its own reported reset. */
-function stillCurrent(record: CachedProvider, now: number): boolean {
+function stillCurrent(
+  record: CachedProvider,
+  now: number,
+  includeResetlessBuckets = true,
+): boolean {
   const snapshot = record.snapshot;
   return (
     hasCachedMeasure(
       snapshot.provider,
       snapshot.windows,
-      servableCachedSnapshot(snapshot, now).credits,
+      servableCachedSnapshot(snapshot, now, includeResetlessBuckets).credits,
     ) &&
     snapshot.windows.every(
       (window) =>
@@ -342,9 +347,17 @@ function stillCurrent(record: CachedProvider, now: number): boolean {
   );
 }
 
-function reusedReading(record: CachedProvider, now: number): ProviderQuota {
+function reusedReading(
+  record: CachedProvider,
+  now: number,
+  includeResetlessBuckets = true,
+): ProviderQuota {
   const { reuse } = record;
-  const snapshot = servableCachedSnapshot(record.snapshot, now);
+  const snapshot = servableCachedSnapshot(
+    record.snapshot,
+    now,
+    includeResetlessBuckets,
+  );
   return {
     ...snapshot,
     ...(reuse?.accountKeys ? { accountKeys: [...reuse.accountKeys] } : {}),
@@ -380,14 +393,17 @@ export function readCachedProvider(
     : undefined;
 }
 
-function servableCachedSnapshot(
+export function servableCachedSnapshot(
   snapshot: ProviderQuota,
   now: number,
+  includeResetlessBuckets = true,
 ): ProviderQuota {
   if (snapshot.provider !== "devin" || !snapshot.credits?.buckets?.length)
     return snapshot;
   const buckets = snapshot.credits.buckets.filter(
-    (bucket) => !bucket.resetsAt || Date.parse(bucket.resetsAt) > now,
+    (bucket) =>
+      (includeResetlessBuckets || bucket.resetsAt !== undefined) &&
+      (!bucket.resetsAt || Date.parse(bucket.resetsAt) > now),
   );
   if (buckets.length === snapshot.credits.buckets.length) return snapshot;
   const credits = { ...snapshot.credits };

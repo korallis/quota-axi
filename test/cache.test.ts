@@ -979,6 +979,57 @@ oauth_host = "https://auth.kimi.ai"
     }
   });
 
+  it("persists resetless Devin credits only for bounded fresh reuse", () => {
+    useTempCache();
+    const contextId = devinCacheContextId(
+      "env:WINDSURF_API_KEY",
+      "https://server.codeium.com",
+      "synthetic-devin-cache-key",
+    );
+    publishDevinReadingContextId(contextId);
+    const snapshot = quotaWithoutWindows("devin");
+    snapshot.source = "api";
+    snapshot.credits = {
+      buckets: [{ id: "prompt", used: 7, available: 14, unit: "credits" }],
+    };
+    stampReadingInputs(snapshot, { paths: [], digest: inputsDigest([]) });
+    vi.useFakeTimers();
+    try {
+      const now = Date.parse("2026-07-06T18:10:30.000Z");
+      vi.setSystemTime(now);
+      writeCachedProviders([snapshot]);
+      const cached = readCachedDevinProvider(contextId);
+      expect(cached).toMatchObject({ windows: [], credits: snapshot.credits });
+      expect(readReusableProviders("devin", 120, now)).toMatchObject([
+        { windows: [], credits: snapshot.credits, state: { reused: true } },
+      ]);
+      expect(
+        staleFromCache(cached!, "request_timeout", ["api"], [], now),
+      ).toBeUndefined();
+      expect(readSnapshotProviders(cacheFilePath(), "devin", now)).toBe(
+        "expired",
+      );
+
+      const muchLater = now + 365 * 24 * 60 * 60 * 1_000;
+      vi.setSystemTime(muchLater);
+      expect(readReusableProviders("devin", 120, muchLater)).toBeUndefined();
+      expect(
+        staleFromCache(
+          readCachedDevinProvider(contextId)!,
+          "request_timeout",
+          ["api"],
+          [],
+          muchLater,
+        ),
+      ).toBeUndefined();
+      expect(readSnapshotProviders(cacheFilePath(), "devin", muchLater)).toBe(
+        "expired",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("preserves Devin supplemental buckets across a same-context cache read", () => {
     useTempCache();
     const contextId = devinCacheContextId(
@@ -1055,7 +1106,9 @@ oauth_host = "https://auth.kimi.ai"
       ).toHaveLength(3);
       expect(
         readSnapshotProviders(cacheFilePath(), "devin", before),
-      ).toMatchObject([{ credits: { buckets: snapshot.credits?.buckets } }]);
+      ).toMatchObject([
+        { credits: { buckets: snapshot.credits?.buckets?.slice(0, 2) } },
+      ]);
 
       vi.setSystemTime(after);
       const cached = readCachedDevinProvider(contextId);
@@ -1070,7 +1123,11 @@ oauth_host = "https://auth.kimi.ai"
       );
       expect(
         staleFromCache(cached!, "request_timeout", ["api"], [], after)?.credits,
-      ).toEqual(cached?.credits);
+      ).toEqual({
+        remaining: 5,
+        unit: "usd",
+        buckets: [snapshot.credits?.buckets?.[1]],
+      });
       const reused = readReusableProviders("devin", 120, after);
       expect(reused?.[0].state.reused).toBe(true);
       expect(reused?.[0].windows[0].percentUsed).toBe(40);
@@ -1078,7 +1135,14 @@ oauth_host = "https://auth.kimi.ai"
       expect(
         readSnapshotProviders(cacheFilePath(), "devin", after),
       ).toMatchObject([
-        { credits: cached?.credits, windows: [{ percentUsed: 40 }] },
+        {
+          credits: {
+            remaining: 5,
+            unit: "usd",
+            buckets: [snapshot.credits?.buckets?.[1]],
+          },
+          windows: [{ percentUsed: 40 }],
+        },
       ]);
     } finally {
       vi.useRealTimers();

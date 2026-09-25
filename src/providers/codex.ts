@@ -146,7 +146,8 @@ export function createCodexAdapter(
     id: "codex",
     label: "Codex",
     discoverAccounts: () => discoverCodexAccounts(dependencies),
-    afterAccountQuotas: (reports) => fetchExpandedOmpQuota(dependencies, reports),
+    afterAccountQuotas: (reports) =>
+      fetchExpandedOmpQuota(dependencies, reports),
     fetchQuota: (options) => fetchSingleWinnerQuota(dependencies, options),
     inspectAuth: (_options) => inspectAuthWithDependencies(dependencies),
   };
@@ -411,11 +412,12 @@ async function fetchExpandedOmpQuota(
     reports.some((report) => report.state.status !== "auth_required")
   )
     return reports;
-  const previous = reports[reports.length - 1]!;
-  const fallback = await fetchOmpCodexQuota(dependencies, previous);
-  if (!fallback || fallback === previous) return reports;
+  const fallback = await fetchOmpCodexQuota(
+    dependencies,
+    reports[reports.length - 1]!,
+  );
   if (
-    fallback.source === "omp:openai-codex" &&
+    fallback?.source === "omp:openai-codex" &&
     fallback.state.status === "fresh"
   ) {
     return [
@@ -427,14 +429,7 @@ async function fetchExpandedOmpQuota(
       },
     ];
   }
-  return [
-    ...reports.slice(0, -1),
-    {
-      ...fallback,
-      accountKey: previous.accountKey,
-      accountKeys: previous.accountKeys,
-    },
-  ];
+  return reports;
 }
 
 function laneIdentity(

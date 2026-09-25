@@ -213,18 +213,28 @@ export async function fetchQuotaWithRuntime(
   }
 
   const finalError = errorMessage(finalFailure);
-  if (staleEligibleFailure(finalFailure)) {
-    const cached = readCachedProvider("agy");
-    const stale = cached
-      ? staleFromCache(cached, finalError, sourceNames(attempts), attempts)
-      : undefined;
-    if (stale) return stale;
-  } else if (isDefinitiveAuthFailure(finalFailure)) {
+  const cached = readCachedProvider("agy");
+  const cachedAttemptSource =
+    cached?.source === "cli-rpc" ? "loopback" : cached?.source;
+  const cachedRejected =
+    cached &&
+    attempts.some(
+      (attempt) =>
+        attempt.source === cachedAttemptSource &&
+        attempt.status === "failed" &&
+        attempt.error === "Antigravity sign-in required",
+    );
+  if (cachedRejected) {
     try {
       deleteCachedProvider("agy");
     } catch {
       // Cache retirement is best effort; preserve the definitive auth result.
     }
+  } else if (staleEligibleFailure(finalFailure)) {
+    const stale = cached
+      ? staleFromCache(cached, finalError, sourceNames(attempts), attempts)
+      : undefined;
+    if (stale) return stale;
   }
 
   return failedProvider({

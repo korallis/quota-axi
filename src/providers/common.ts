@@ -6,6 +6,7 @@ import type {
   SourceAttempt,
 } from "../types.js";
 import { isDegradedSourceAttempt } from "../lib/source-attempts.js";
+import { servableCachedSnapshot } from "../cache.js";
 import { percentRemaining } from "../lib/time.js";
 
 export function withRemaining(
@@ -202,7 +203,17 @@ export function staleFromCache(
   now: number = Date.now(),
 ): ProviderQuota | undefined {
   const windows = servableStaleWindows(cached, now);
-  if (windows.length === 0 && !(cached.provider === "devin" && cached.credits))
+  const servable = servableCachedSnapshot(cached, now, false);
+  const credits = servable.credits;
+  if (
+    windows.length === 0 &&
+    !(
+      cached.provider === "devin" &&
+      (credits?.remaining !== undefined ||
+        credits?.unlimited === true ||
+        credits?.buckets?.length)
+    )
+  )
     return undefined;
   const state: ProviderQuota["state"] = {
     ...cached.state,
@@ -214,7 +225,7 @@ export function staleFromCache(
   const untrustedWindowIds = servableUntrustedWindowIds(cached, windows);
   if (untrustedWindowIds) state.untrustedWindowIds = untrustedWindowIds;
   else delete state.untrustedWindowIds;
-  return { ...cached, source: "cache", windows, state, attempts };
+  return { ...servable, source: "cache", windows, state, attempts };
 }
 
 export function statusFromError(error: string): ProviderStatus {

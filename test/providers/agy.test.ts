@@ -402,9 +402,8 @@ describe("Antigravity provider", () => {
     { summaryStatus: 401, modelsStatus: 503 },
     { summaryStatus: 200, modelsStatus: 403 },
   ])(
-    "retires stale quota after OMP summary $summaryStatus and models $modelsStatus",
+    "scopes cache retirement after OMP summary $summaryStatus and models $modelsStatus",
     async ({ summaryStatus, modelsStatus }) => {
-      writeCachedProviders([cachedAgyQuota()]);
       const fetchMock = vi.fn(
         async (url: string | URL | Request, init?: RequestInit) => {
           expect(new Headers(init?.headers).get("authorization")).toBe(
@@ -418,34 +417,42 @@ describe("Antigravity provider", () => {
         },
       );
       vi.stubGlobal("fetch", fetchMock);
-      const result = await fetchQuotaWithRuntime({
-        ...runtimeWith({}),
-        async resolveOmpAntigravity() {
-          return {
-            status: "available" as const,
-            credential: {
-              accessToken: "synthetic-antigravity-access",
-              projectId: "synthetic-project",
-            },
-          };
-        },
-      });
+      for (const source of ["cli-rpc", "omp:google-antigravity"] as const) {
+        const snapshot = cachedAgyQuota();
+        snapshot.source = source;
+        writeCachedProviders([snapshot]);
+        fetchMock.mockClear();
+        const result = await fetchQuotaWithRuntime({
+          ...runtimeWith({}),
+          async resolveOmpAntigravity() {
+            return {
+              status: "available" as const,
+              credential: {
+                accessToken: "synthetic-antigravity-access",
+                projectId: "synthetic-project",
+              },
+            };
+          },
+        });
 
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      expect(result.state).toMatchObject({
-        status: "auth_required",
-        error: "Antigravity sign-in required",
-      });
-      expect(result.windows).toEqual([]);
-      expect(result.attempts?.at(-1)).toMatchObject({
-        source: "omp:google-antigravity",
-        status: "failed",
-        error: "Antigravity sign-in required",
-      });
-      expect(readCachedProvider("agy")).toBeUndefined();
-      expect(JSON.stringify(result)).not.toContain(
-        "synthetic-antigravity-access",
-      );
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(result.state).toMatchObject({
+          status: "auth_required",
+          error: "Antigravity sign-in required",
+        });
+        expect(result.windows).toEqual([]);
+        expect(result.attempts?.at(-1)).toMatchObject({
+          source: "omp:google-antigravity",
+          status: "failed",
+          error: "Antigravity sign-in required",
+        });
+        expect(readCachedProvider("agy")?.source).toBe(
+          source === "cli-rpc" ? "cli-rpc" : undefined,
+        );
+        expect(JSON.stringify(result)).not.toContain(
+          "synthetic-antigravity-access",
+        );
+      }
     },
   );
 
