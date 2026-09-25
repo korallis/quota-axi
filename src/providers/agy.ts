@@ -1336,7 +1336,9 @@ async function fetchOmpAntigravityQuota(
     );
   } catch (error) {
     summaryFailure =
-      error instanceof Error ? error : new Error("Antigravity quota unavailable");
+      error instanceof Error
+        ? error
+        : new Error("Antigravity quota unavailable");
   }
 
   try {
@@ -1349,11 +1351,17 @@ async function fetchOmpAntigravityQuota(
     if (windows.length > 0) return { windows, refreshedAt: nowIso(), account };
   } catch (error) {
     if (
-      !summaryFailure ||
-      (!staleEligibleFailure(summaryFailure) && staleEligibleFailure(error))
+      isDefinitiveAuthFailure(error) ||
+      (!isDefinitiveAuthFailure(summaryFailure) &&
+        (!summaryFailure ||
+          (staleEligibleFailure(error) &&
+            (!staleEligibleFailure(summaryFailure) ||
+              failureRank(error) > failureRank(summaryFailure)))))
     ) {
       summaryFailure =
-        error instanceof Error ? error : new Error("Antigravity quota unavailable");
+        error instanceof Error
+          ? error
+          : new Error("Antigravity quota unavailable");
     }
   }
   throw summaryFailure ?? new Error("Antigravity quota unavailable");

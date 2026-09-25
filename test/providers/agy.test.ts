@@ -351,16 +351,116 @@ describe("Antigravity provider", () => {
   });
 
   it.each([
-    { httpStatus: 429, status: "rate_limited", error: "Antigravity quota endpoint rate limited" },
-    { httpStatus: 503, status: "unavailable", error: "Antigravity quota endpoint returned HTTP 503" },
-  ])("preserves OMP HTTP $httpStatus for failed and stale readings", async ({
-    httpStatus,
-    status,
-    error,
-  }) => {
-    const fetchMock = vi.fn(async () => new Response(null, { status: httpStatus }));
-    vi.stubGlobal("fetch", fetchMock);
-    const runtime = {
+    {
+      httpStatus: 429,
+      status: "rate_limited",
+      error: "Antigravity quota endpoint rate limited",
+    },
+    {
+      httpStatus: 503,
+      status: "unavailable",
+      error: "Antigravity quota endpoint returned HTTP 503",
+    },
+  ])(
+    "preserves OMP HTTP $httpStatus for failed and stale readings",
+    async ({ httpStatus, status, error }) => {
+      const fetchMock = vi.fn(
+        async () => new Response(null, { status: httpStatus }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const runtime = {
+        ...runtimeWith({}),
+        async resolveOmpAntigravity() {
+          return {
+            status: "available" as const,
+            credential: {
+              accessToken: "synthetic-antigravity-access",
+              projectId: "synthetic-project",
+            },
+          };
+        },
+      };
+      const failed = await fetchQuotaWithRuntime(runtime);
+      expect(failed.state).toMatchObject({ status, error });
+      expect(failed.attempts?.at(-1)).toMatchObject({
+        source: "omp:google-antigravity",
+        status: "failed",
+        error,
+      });
+
+      writeCachedProviders([cachedAgyQuota()]);
+      const stale = await fetchQuotaWithRuntime(runtime);
+      expect(stale.state).toMatchObject({ status: "stale", error });
+      expect(stale.windows).toHaveLength(1);
+      expect(readCachedProvider("agy")).toBeDefined();
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    },
+  );
+
+  it.each([
+    { summaryStatus: 429, modelsStatus: 401 },
+    { summaryStatus: 401, modelsStatus: 503 },
+    { summaryStatus: 200, modelsStatus: 403 },
+  ])(
+    "retires stale quota after OMP summary $summaryStatus and models $modelsStatus",
+    async ({ summaryStatus, modelsStatus }) => {
+      writeCachedProviders([cachedAgyQuota()]);
+      const fetchMock = vi.fn(
+        async (url: string | URL | Request, init?: RequestInit) => {
+          expect(new Headers(init?.headers).get("authorization")).toBe(
+            "Bearer synthetic-antigravity-access",
+          );
+          return String(url).endsWith("retrieveUserQuotaSummary")
+            ? summaryStatus === 200
+              ? Response.json({ groups: [] })
+              : new Response(null, { status: summaryStatus })
+            : new Response(null, { status: modelsStatus });
+        },
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const result = await fetchQuotaWithRuntime({
+        ...runtimeWith({}),
+        async resolveOmpAntigravity() {
+          return {
+            status: "available" as const,
+            credential: {
+              accessToken: "synthetic-antigravity-access",
+              projectId: "synthetic-project",
+            },
+          };
+        },
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(result.state).toMatchObject({
+        status: "auth_required",
+        error: "Antigravity sign-in required",
+      });
+      expect(result.windows).toEqual([]);
+      expect(result.attempts?.at(-1)).toMatchObject({
+        source: "omp:google-antigravity",
+        status: "failed",
+        error: "Antigravity sign-in required",
+      });
+      expect(readCachedProvider("agy")).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain(
+        "synthetic-antigravity-access",
+      );
+    },
+  );
+
+  it("keeps a model rate limit over a summary server failure", async () => {
+    writeCachedProviders([cachedAgyQuota()]);
+    let request = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        ++request === 1
+          ? new Response(null, { status: 503 })
+          : new Response(null, { status: 429 }),
+      ),
+    );
+    const result = await fetchQuotaWithRuntime({
       ...runtimeWith({}),
       async resolveOmpAntigravity() {
         return {
@@ -371,21 +471,12 @@ describe("Antigravity provider", () => {
           },
         };
       },
-    };
-    const failed = await fetchQuotaWithRuntime(runtime);
-    expect(failed.state).toMatchObject({ status, error });
-    expect(failed.attempts?.at(-1)).toMatchObject({
-      source: "omp:google-antigravity",
-      status: "failed",
-      error,
     });
-
-    writeCachedProviders([cachedAgyQuota()]);
-    const stale = await fetchQuotaWithRuntime(runtime);
-    expect(stale.state).toMatchObject({ status: "stale", error });
-    expect(stale.windows).toHaveLength(1);
+    expect(result.state).toMatchObject({
+      status: "stale",
+      error: "Antigravity quota endpoint rate limited",
+    });
     expect(readCachedProvider("agy")).toBeDefined();
-    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it("keeps OMP model-request transport failure stale-eligible after an empty summary", async () => {
@@ -423,12 +514,13 @@ describe("Antigravity provider", () => {
     vi.useFakeTimers();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (_url: unknown, init?: RequestInit) =>
-        new Promise((_resolve, reject) => {
-          init?.signal?.addEventListener("abort", () =>
-            reject(new Error("request aborted")),
-          );
-        }),
+      vi.fn(
+        async (_url: unknown, init?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new Error("request aborted")),
+            );
+          }),
       ),
     );
     const reading = fetchQuotaWithRuntime({
