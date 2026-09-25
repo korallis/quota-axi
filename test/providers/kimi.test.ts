@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { describe, expect, it, vi } from "vitest";
+import { annotateQuotaAdvice } from "../../src/advice.js";
 import { withQuotaSemantics } from "../../src/interpretation.js";
 import { providerPresence } from "../../src/lib/source-attempts.js";
 import {
@@ -2153,6 +2154,50 @@ describe("Kimi credential outcomes and cache policy", () => {
       },
     ]);
     expect(JSON.stringify(report)).not.toContain("soft-expired-pi-token");
+  });
+
+  it("attributes refreshable OMP expiry to OMP without Pi or CLI recovery advice", async () => {
+    const request = vi.fn(async () => new Response(null, { status: 401 }));
+    const remove = vi.fn();
+    const report = await testAdapter({
+      broker: broker({ status: "missing" }),
+      cliCredentialSource: cliCredentialSource({ status: "missing" }),
+      ompBroker: {
+        resolve: async () => ({
+          status: "expired",
+          credential: { accessToken: "soft-expired-omp-token" },
+          refreshable: true,
+        }),
+        inspect: async () => ({ status: "expired" }),
+      },
+      fetch: request,
+      deleteCachedProvider: remove,
+    }).fetchQuota(OPTIONS);
+
+    expect(request).toHaveBeenCalledOnce();
+    expect(remove).not.toHaveBeenCalled();
+    expect(report.state).toMatchObject({
+      status: "unavailable",
+      stale: false,
+      error: "omp_kimi_credential_expired",
+      authStatus: "expired_refreshable",
+    });
+    expect(report.attempts).toContainEqual({
+      source: "omp:kimi-code",
+      status: "failed",
+      error: "omp_kimi_credential_expired",
+    });
+    expect(JSON.stringify(report)).not.toContain("soft-expired-omp-token");
+
+    const advised = annotateQuotaAdvice({
+      generatedAt: new Date(NOW).toISOString(),
+      providers: [withQuotaSemantics(report, new Date(NOW).toISOString())],
+    });
+    expect(advised.providers[0].state.reason).toBeUndefined();
+    expect(advised.providers[0].state.remedyCommand).toBeUndefined();
+    expect(renderQuotaToon(advised, "quota-axi", false)).toContain(
+      "kimi,all,unavailable,omp_kimi_credential_expired (auth expired_refreshable),none",
+    );
   });
 
   it("reports both sources soft-expired at once as expired_refreshable without retiring cache", async () => {

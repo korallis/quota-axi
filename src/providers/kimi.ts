@@ -788,18 +788,19 @@ async function resolveCliCredential(
 
 /**
  * Soft expiry for a stored-expired credential whose record carries a refresh
- * path (a Kimi Code CLI `refresh_token`, a Pi `refresh` property). A
- * definitively rejected probe means the short-lived access token died before
- * its rotation, not that the login is gone, so the verdict is the soft
+ * path. A definitively rejected probe means the short-lived access token died
+ * before its rotation, not that the login is gone, so the verdict is the soft
  * `expired_refreshable` classification (status `unavailable`, never
- * `auth_required`) and the cache survives. Rotation stays the vendor CLI's
- * job: nothing here reads or exchanges the refresh token.
+ * `auth_required`) and the cache survives. Nothing here reads or exchanges
+ * the refresh token.
  */
 function refreshableExpiryFailure(source: string): KimiFailure {
   return new KimiFailure(
     source === KIMI_CODE_CLI_CREDENTIAL_SOURCE
       ? "kimi_code_cli_credential_expired"
-      : "pi_kimi_credential_expired",
+      : source === PI_KIMI_CREDENTIAL_SOURCE
+        ? "pi_kimi_credential_expired"
+        : "omp_kimi_credential_expired",
     {
       status: "unavailable",
       staleEligible: true,
