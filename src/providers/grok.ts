@@ -299,6 +299,8 @@ async function fetchQuotaWithDependencies(
       result.outcome === "rejected",
   );
   let ompRefreshableExpiredRejected = false;
+  let ompTransientError: string | undefined;
+  let ompRetryAfter: string | undefined;
   if (
     selection.outcome !== "quota" &&
     selection.outcome !== "transient" &&
@@ -337,6 +339,10 @@ async function fetchQuotaWithDependencies(
           resolution.status === "expired" &&
           resolution.refreshable &&
           isDefinitiveGrokAuthError(errorText);
+        if (!isDefinitiveGrokAuthError(errorText)) {
+          ompTransientError = errorText;
+          if (error instanceof RateLimitError) ompRetryAfter = error.retryAfter;
+        }
         attempts.push({
           source: "omp:xai-oauth",
           status: "failed",
@@ -354,8 +360,8 @@ async function fetchQuotaWithDependencies(
     }
   }
 
-  const transientError = selection.transientError;
-  const retryAfter = selection.retryAfter;
+  const transientError = selection.transientError ?? ompTransientError;
+  const retryAfter = selection.retryAfter ?? ompRetryAfter;
 
   if (selection.outcome === "quota" && selection.result) {
     const quota = selection.result;
@@ -378,7 +384,7 @@ async function fetchQuotaWithDependencies(
 
   const authStatus = ompRefreshableExpiredRejected
     ? "expired_refreshable"
-    : selection.outcome === "live_no_quota"
+    : selection.outcome === "live_no_quota" || ompTransientError !== undefined
       ? "usable"
       : classifyGrokAuthStatus(cliState, piResolution, selection);
 

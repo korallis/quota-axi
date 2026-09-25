@@ -1735,6 +1735,59 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
     );
   });
 
+  it.each([
+    "timeout",
+    "rate_limit",
+    "server_error",
+    "invalid_response",
+  ] as const)(
+    "keeps an unrelated CLI cache on a transient OMP $failure",
+    async (failure) => {
+      writeCachedProviders([cachedGrok("web")]);
+      const fetchMock = vi.fn(async () => {
+        if (failure === "timeout") {
+          const error = new Error("offline");
+          error.name = "AbortError";
+          throw error;
+        }
+        if (failure === "rate_limit")
+          return grpcResponse(new Uint8Array(), {
+            status: 429,
+            headers: { "retry-after": "45" },
+          });
+        if (failure === "server_error")
+          return grpcResponse(new Uint8Array(), { status: 503 });
+        return grpcResponse(new Uint8Array());
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const report = await createGrokAdapter({
+        ompBroker: {
+          resolve: async () => ({
+            status: "available",
+            credential: { accessToken: "synthetic-omp-access" },
+          }),
+          inspect: async () => ({ status: "available" }),
+        },
+      }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(report.source).toBe("unavailable");
+      expect(report.windows).toEqual([]);
+      expect(report.state).toMatchObject({
+        status: failure === "rate_limit" ? "rate_limited" : "error",
+        stale: false,
+        authStatus: "usable",
+      });
+      if (failure === "rate_limit")
+        expect(report.state.retryAfter).toBeDefined();
+      expect(report.attempts).toContainEqual(
+        expect.objectContaining({ source: "omp:xai-oauth", status: "failed" }),
+      );
+      expect(readCachedProvider("grok")?.windows[0]?.percentRemaining).toBe(80);
+      expect(JSON.stringify(report)).not.toContain("synthetic-omp-access");
+    },
+  );
+
   it("keeps an invalid CLI store degraded when Pi returns quota", async () => {
     writeAuth({ invalid: { type: "api_key", key: "ignored" } });
     writeValidPiXaiOauth();

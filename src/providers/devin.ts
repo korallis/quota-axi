@@ -1248,7 +1248,7 @@ export function normalizeDevinPayload(
         }
       : undefined;
   const credits = planStatus
-    ? creditsFromMicros(planStatus, planInfo)
+    ? creditsFromMicros(planStatus, planInfo, now)
     : undefined;
   const untrustedWindowIds: string[] = [];
   const windows: QuotaWindow[] = [];
@@ -1404,7 +1404,8 @@ function windowWithoutPercent(
 
 function creditsFromMicros(
   planStatus: Record<string, unknown>,
-  planInfo?: Record<string, unknown>,
+  planInfo: Record<string, unknown> | undefined,
+  now: number,
 ): NormalizedDevinPayload["credits"] | undefined {
   const credits: NonNullable<NormalizedDevinPayload["credits"]> = {};
   if (Object.hasOwn(planStatus, "overageBalanceMicros")) {
@@ -1415,12 +1416,12 @@ function creditsFromMicros(
     }
   }
 
-  if (planInfo) {
+  const resetsAt = nonemptyString(planStatus.planEnd);
+  if (planInfo && (!resetsAt || Date.parse(resetsAt) > now)) {
     const buckets: NonNullable<
       NonNullable<NormalizedDevinPayload["credits"]>["buckets"]
     > = [];
     const startsAt = nonemptyString(planStatus.planStart);
-    const resetsAt = nonemptyString(planStatus.planEnd);
     for (const [id, usedKey, availableKey, limitKey] of [
       [
         "prompt",

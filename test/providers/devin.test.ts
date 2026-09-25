@@ -282,6 +282,48 @@ describe("Devin request transport", () => {
     },
   );
 
+  it.each([NOW - 3600_000, NOW])(
+    "omits OMP buckets when planEnd %i has elapsed but keeps the current weekly quota",
+    async (planEnd) => {
+      const response = ompDevinResponse({
+        email: "devin@example.test",
+        accountId: "devin-account-fixture",
+        organizationId: "devin-org-fixture",
+        organization: "Example Organization",
+        weeklyRemaining: 65,
+        weeklyReset: Math.floor(NOW / 1000) + 3600,
+        tier: 18,
+        planStart: Math.floor(Date.parse("2026-09-01T00:00:00.000Z") / 1000),
+        planEnd: Math.floor(planEnd / 1000),
+        creditBuckets: {
+          prompt: { used: 30, available: 70, limit: 100 },
+          flow: { used: 20, available: 180, limit: 200 },
+          flex: { used: 5, available: 45, limit: 50 },
+        },
+      });
+      const report = await testAdapter({
+        sources: [createDevinEnvSource({})],
+        ompBroker: {
+          resolve: async () => ({
+            status: "available",
+            credential: { accessToken: SESSION_TOKEN },
+          }),
+        },
+        fetch: sequentialFetch([response]),
+      }).fetchQuota(OPTIONS);
+      expect(report).toMatchObject({
+        source: "omp:devin",
+        state: { status: "fresh", authStatus: "usable" },
+        windows: [{ id: "weekly", percentRemaining: 65 }],
+      });
+      expect(report.credits?.buckets).toBeUndefined();
+      expect(
+        withQuotaSemantics(report, new Date(NOW).toISOString()).quotaSemantics
+          ?.effectiveAvailability[0]?.effectivePercentRemaining,
+      ).toBe(65);
+    },
+  );
+
   it("does not infer exhausted daily or weekly quota from OMP prompt credits alone", async () => {
     const planStatus = joinProto([testProtoInt(6, 7), testProtoInt(8, 14)]);
     const response = new Response(
@@ -393,6 +435,27 @@ describe("Devin credential matrix", () => {
         },
       ],
     });
+  });
+
+  it("omits expired native credit buckets without altering quota windows or overage balance", () => {
+    const payload = structuredClone(PRO) as DevinTestPayload;
+    Object.assign(payload.userStatus.planStatus, {
+      planEnd: new Date(NOW - 1000).toISOString(),
+      usedPromptCredits: 30,
+      availablePromptCredits: 70,
+      usedFlowCredits: 20,
+      availableFlowCredits: 180,
+      usedFlexCredits: 5,
+      availableFlexCredits: 45,
+    });
+    Object.assign(payload.planInfo, {
+      monthlyPromptCredits: 100,
+      monthlyFlowCredits: 200,
+      monthlyFlexCreditPurchaseAmount: 50,
+    });
+    const normalized = normalizeDevinPayload(payload, NOW);
+    expect(normalized.windows).toEqual([WEEKLY, DAILY]);
+    expect(normalized.credits).toEqual({ remaining: 2.5, unit: "usd" });
   });
 
   it("reuses the session kind for the daily window", () => {
