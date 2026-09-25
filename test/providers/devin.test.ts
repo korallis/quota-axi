@@ -282,6 +282,75 @@ describe("Devin request transport", () => {
     },
   );
 
+  it("does not infer exhausted daily or weekly quota from OMP prompt credits alone", async () => {
+    const planStatus = joinProto([testProtoInt(6, 7), testProtoInt(8, 14)]);
+    const response = new Response(
+      joinProto([
+        testProtoMessage(1, joinProto([testProtoMessage(13, planStatus)])),
+        testProtoMessage(
+          2,
+          joinProto([testProtoInt(12, 21), testProtoInt(35, 2)]),
+        ),
+      ]).buffer,
+      { status: 200, headers: { "content-type": "application/proto" } },
+    );
+    const report = await testAdapter({
+      sources: [createDevinEnvSource({})],
+      ompBroker: {
+        resolve: async () => ({
+          status: "available",
+          credential: { accessToken: SESSION_TOKEN },
+        }),
+      },
+      fetch: sequentialFetch([response]),
+    }).fetchQuota(OPTIONS);
+
+    expect(report.source).toBe("omp:devin");
+    expect(report.state).toMatchObject({
+      status: "fresh",
+      authStatus: "usable",
+    });
+    expect(report.windows).toEqual([]);
+    expect(report.credits?.buckets).toEqual([
+      { id: "prompt", used: 7, available: 14, limit: 21, unit: "credits" },
+    ]);
+    const interpreted = withQuotaSemantics(report, new Date(NOW).toISOString());
+    expect(interpreted.quotaSemantics?.effectiveAvailability).toEqual([]);
+  });
+
+  it.each([
+    { id: "weekly", resetField: 18 },
+    { id: "daily", resetField: 17 },
+  ] as const)(
+    "defaults only the $id window to proto3 zero when its reset is present",
+    async ({ id, resetField }) => {
+      const planStatus = joinProto([
+        testProtoInt(resetField, Math.floor(NOW / 1000) + 3600),
+      ]);
+      const response = new Response(
+        joinProto([
+          testProtoMessage(1, joinProto([testProtoMessage(13, planStatus)])),
+          testProtoMessage(2, joinProto([testProtoInt(35, 2)])),
+        ]).buffer,
+        { status: 200, headers: { "content-type": "application/proto" } },
+      );
+      const report = await testAdapter({
+        sources: [createDevinEnvSource({})],
+        ompBroker: {
+          resolve: async () => ({
+            status: "available",
+            credential: { accessToken: SESSION_TOKEN },
+          }),
+        },
+        fetch: sequentialFetch([response]),
+      }).fetchQuota(OPTIONS);
+      expect(report.source).toBe("omp:devin");
+      expect(report.windows).toEqual([
+        expect.objectContaining({ id, percentRemaining: 0 }),
+      ]);
+    },
+  );
+
   it("declares env before the credentials file", () => {
     expect([...DEVIN_SOURCE_ORDER]).toEqual([
       DEVIN_ENV_SOURCE,

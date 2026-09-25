@@ -936,21 +936,6 @@ function convertOmpDevinResponse(bytes: Uint8Array): unknown {
   const mappedPlanStatus = planStatus
     ? mapOmpDevinPlanStatus(planStatus)
     : undefined;
-  if (mappedPlanStatus) {
-    for (const [percentKey, resetKey] of [
-      ["dailyQuotaRemainingPercent", "dailyQuotaResetAtUnix"],
-      ["weeklyQuotaRemainingPercent", "weeklyQuotaResetAtUnix"],
-    ] as const) {
-      const hasPositiveReset =
-        (integerValue(mappedPlanStatus[resetKey]) ?? 0) > 0;
-      if (
-        (billingStrategy === 2n || hasPositiveReset) &&
-        !Object.hasOwn(mappedPlanStatus, percentKey)
-      ) {
-        mappedPlanStatus[percentKey] = "0";
-      }
-    }
-  }
   return {
     userStatus: {
       ...(email ? { email } : {}),
@@ -1199,10 +1184,8 @@ function rejectHttpFailure(response: Response, receivedAt: number): void {
 /**
  * Normalize a Connect-JSON `GetUserStatus` body.
  *
- * The OMP request follows its Devin CLI usage contract: an explicit positive
- * reset or quota billing establishes a quota window unless the plan hides it.
- * The daily window reuses the existing `session` kind; an explicit quota-plan
- * proto3 zero remains zero, while malformed or elapsed readings stay untrusted.
+ * The daily window reuses the existing `session` kind; malformed or elapsed
+ * readings stay untrusted.
  * Prompt, flow, and flex credits remain separate vendor-reported buckets and
  * never become binding windows.
  */
