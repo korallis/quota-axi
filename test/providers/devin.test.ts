@@ -931,13 +931,56 @@ describe("Devin credential matrix", () => {
     expect(report.state).toMatchObject({
       status: "auth_required",
       error: "devin_credential_unavailable",
-      remedyCommand: "devin auth login",
     });
+    expect(report.state.remedyCommand).toBeUndefined();
     for (const attempt of report.attempts ?? []) {
       expect(attempt.status).toBe("skipped");
       expect(attempt.credentialPresent).toBeUndefined();
     }
   });
+
+  it.each([false, true])(
+    "does not offer native login for OMP rejection after native rejection: %s",
+    async (nativeRejected) => {
+      const request = sequentialFetch(
+        nativeRejected
+          ? [
+              new Response(null, { status: 401 }),
+              new Response(null, { status: 401 }),
+            ]
+          : [new Response(null, { status: 401 })],
+      );
+      const report = await testAdapter({
+        sources: [
+          createDevinEnvSource(
+            nativeRejected ? { WINDSURF_API_KEY: SYNTHETIC_KEY } : {},
+          ),
+        ],
+        ompBroker: {
+          resolve: async () => ({
+            status: "available",
+            credential: { accessToken: SESSION_TOKEN },
+          }),
+        },
+        fetch: request,
+      }).fetchQuota(OPTIONS);
+
+      expect(request).toHaveBeenCalledTimes(nativeRejected ? 2 : 1);
+      expect(report.state).toMatchObject({
+        status: "auth_required",
+        error: "provider_auth_rejected",
+        authStatus: "unusable",
+      });
+      expect(report.state.remedyCommand).toBeUndefined();
+      expect(report.attempts?.at(-1)).toEqual({
+        source: "omp:devin",
+        status: "failed",
+        error: "provider_auth_rejected",
+        credentialPresent: true,
+      });
+      expect(JSON.stringify(report)).not.toContain(SESSION_TOKEN);
+    },
+  );
 
   it("retires the matching cache when every probed credential is rejected", async () => {
     const deleted: string[] = [];
@@ -957,6 +1000,7 @@ describe("Devin credential matrix", () => {
       status: "auth_required",
       error: "provider_auth_rejected",
       authStatus: "unusable",
+      remedyCommand: "devin auth login",
     });
     expect(deleted).toEqual([contextId]);
   });

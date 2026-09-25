@@ -354,6 +354,7 @@ async function acquireDevinQuota(
   const attempts: SourceAttempt[] = [];
   let rejectedContextId: string | undefined;
   let rejectedFailure: DevinFailure | undefined;
+  let nativeRejected = false;
   clearDevinReadingContextId();
 
   try {
@@ -495,6 +496,7 @@ async function acquireDevinQuota(
         status: "auth_required",
         definitiveAuth: true,
       });
+      nativeRejected = true;
     }
 
     let ompResolution;
@@ -558,6 +560,7 @@ async function acquireDevinQuota(
         }
         rejectedFailure = failure;
         rejectedContextId = contextId;
+        nativeRejected = false;
       }
     } else {
       attempts.push({
@@ -576,6 +579,7 @@ async function acquireDevinQuota(
         rejectedContextId,
         attempts,
         dependencies,
+        nativeRejected,
       );
     }
     return failureReport(
@@ -643,6 +647,7 @@ function failureReport(
   cacheContextId: string | undefined,
   attempts: SourceAttempt[],
   dependencies: DevinDependencies,
+  nativeRejected = false,
 ): ProviderQuota {
   if (
     failure.definitiveAuth &&
@@ -698,7 +703,7 @@ function failureReport(
           : failure.definitiveAuth
             ? { authStatus: "unusable" as const }
             : {}),
-      ...(failure.status === "auth_required"
+      ...(failure.status === "auth_required" && nativeRejected
         ? { remedyCommand: SIGN_IN_REMEDY }
         : {}),
       ...(failure.retryAfter ? { retryAfter: failure.retryAfter } : {}),
