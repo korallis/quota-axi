@@ -236,7 +236,10 @@ describe("Codex Pi sibling account lanes", () => {
         order.push("omp-resolve");
         return {
           status: "available" as const,
-          credential: { accessToken: "omp-access-token", accountId: "acct-omp" },
+          credential: {
+            accessToken: "omp-access-token",
+            accountId: "acct-omp",
+          },
         };
       });
       const adapter = (
