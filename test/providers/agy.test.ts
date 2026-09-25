@@ -251,6 +251,105 @@ agy 101 test 9u IPv4 0x2 0t0 TCP 127.0.0.1:64441 (LISTEN)
 });
 
 describe("Antigravity provider", () => {
+  it("uses OMP Google OAuth with the verified Cloud Code quota summary endpoint", async () => {
+    const fetchMock = vi.fn(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        expect(String(input)).toBe(
+          "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+        );
+        expect(init?.method).toBe("POST");
+        expect(new Headers(init?.headers).get("authorization")).toBe(
+          "Bearer synthetic-antigravity-access",
+        );
+        expect(JSON.parse(String(init?.body))).toEqual({
+          project: "synthetic-project",
+        });
+        return Response.json({
+          groups: [
+            {
+              displayName: "Gemini",
+              buckets: [
+                {
+                  bucketId: "gemini-5h",
+                  remainingFraction: 0.73,
+                  resetTime: "2026-09-25T16:35:02Z",
+                },
+              ],
+            },
+          ],
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const runtime = {
+      ...runtimeWith({}),
+      async resolveOmpAntigravity() {
+        return {
+          status: "available" as const,
+          credential: {
+            accessToken: "synthetic-antigravity-access",
+            projectId: "synthetic-project",
+          },
+        };
+      },
+    };
+
+    const result = await fetchQuotaWithRuntime(runtime);
+
+    expect(result.state.status).toBe("fresh");
+    expect(result.source).toBe("omp:google-antigravity");
+    expect(result.windows).toMatchObject([
+      { id: "gemini_5h", percentRemaining: 73, percentUsed: 27 },
+    ]);
+    expect(result.attempts).toContainEqual({
+      source: "omp:google-antigravity",
+      status: "success",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses model quota data only when the OMP summary has no reported buckets", async () => {
+    let request = 0;
+    const fetchMock = vi.fn(async () => {
+      request += 1;
+      return request === 1
+        ? Response.json({ groups: [] })
+        : Response.json({
+            models: {
+              "gemini-test": {
+                displayName: "Gemini Test",
+                quotaInfo: {
+                  remainingFraction: 0.41,
+                  resetTime: "2026-09-25T16:35:02Z",
+                },
+              },
+            },
+          });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const runtime = {
+      ...runtimeWith({}),
+      async resolveOmpAntigravity() {
+        return {
+          status: "available" as const,
+          credential: {
+            accessToken: "synthetic-antigravity-access",
+            projectId: "synthetic-project",
+          },
+        };
+      },
+    };
+
+    const result = await fetchQuotaWithRuntime(runtime);
+
+    expect(result.state.status).toBe("fresh");
+    expect(result.source).toBe("omp:google-antigravity");
+    expect(result.windows).toMatchObject([
+      { id: "model:gemini_test", kind: "model", percentRemaining: 41 },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("fetches quota from an already-running loopback endpoint and merges identity", async () => {
     const runtime = runtimeWith({
       ps: "123 /Users/test/.local/bin/agy\n",

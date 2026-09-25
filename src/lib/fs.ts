@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { traceInput } from "./input-trace.js";
 import { createHash } from "node:crypto";
@@ -8,6 +8,7 @@ import {
   claudeEnvOauthToken,
   claudeProfileLocations,
 } from "./claude-profile.js";
+import { resolvePiAuthFilePath } from "./pi-agent-dir.js";
 
 export type JsonFileReadResult =
   | { status: "success"; value: unknown }
@@ -64,7 +65,9 @@ export function claudeCredentialContextId(): string {
   // including a relative raw path hash.
   // Version the identity to withhold snapshots an earlier release wrote for
   // this same selection: `v2` covers former opaque discovery, `v3` the windows
-  // 0.1.50 stored with `utilization`/`percent` read as remaining.
+  // 0.1.50 stored with `utilization`/`percent` read as remaining, and `v4`
+  // stamps Pi and OMP store metadata so stale quota cannot cross credential
+  // replacement. Only metadata enters this identity; credential bytes do not.
   //
   // An explicit environment token selects an account the profile path and
   // Keychain service do not describe, so it earns its own identity: a snapshot
@@ -73,16 +76,47 @@ export function claudeCredentialContextId(): string {
   // keeps the identity it already cached under. It is a presence marker, never
   // any part of the token.
   const envSelected = claudeEnvOauthToken() !== undefined;
+  const piAuthPath = resolvePiAuthFilePath(process.env, homedir);
+  const ompDatabasePath = join(
+    process.env.HOME && process.env.HOME.length > 0
+      ? process.env.HOME
+      : homedir(),
+    ".omp",
+    "agent",
+    "agent.db",
+  );
   return createHash("sha256")
     .update(
       JSON.stringify([
-        "claude-profile-v3",
+        "claude-profile-v4",
         resolve(configDir),
         keychainService,
+        credentialStoreStamp(piAuthPath),
+        credentialStoreStamp(ompDatabasePath),
         ...(envSelected ? ["env-token"] : []),
       ]),
     )
     .digest("hex");
+}
+
+function credentialStoreStamp(path: string): unknown[] {
+  try {
+    const stats = statSync(path, { bigint: true });
+    return [
+      path,
+      stats.dev.toString(),
+      stats.ino.toString(),
+      stats.size.toString(),
+      stats.mtimeNs.toString(),
+      stats.ctimeNs.toString(),
+    ];
+  } catch (error) {
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? String(error.code)
+        : "unreadable";
+    return [path, code];
+  }
 }
 
 // The grant is per Keychain item, so the marker is keyed by the service the
@@ -178,8 +212,9 @@ function readUntracedJsonFileResult(file: string): JsonFileReadResult {
 export async function readBoundedFile(
   path: string,
   maxBytes: number,
+  traceIdentity?: string,
 ): Promise<Buffer> {
-  traceInput(path);
+  traceInput(path, traceIdentity);
   const file = await open(path, "r");
   try {
     const contents = new Uint8Array(maxBytes + 1);

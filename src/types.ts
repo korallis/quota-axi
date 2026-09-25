@@ -40,6 +40,9 @@ export const PROVIDER_IDS = [
 export type ProviderSource =
   | "oauth"
   | "pi:openai-codex"
+  | "pi:anthropic"
+  | "omp:anthropic"
+  | "omp:google-antigravity"
   | `pi:openai-codex-${string}`
   | "cli-rpc"
   | "cli"

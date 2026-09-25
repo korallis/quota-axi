@@ -3,6 +3,7 @@ import * as http from "node:http";
 import * as https from "node:https";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { providerFetch } from "../lib/http.js";
 import { deleteCachedProvider, readCachedProvider } from "../cache.js";
 import {
   currentUserProcessListArgs,
@@ -24,6 +25,10 @@ import type {
   QuotaWindow,
   SourceAttempt,
 } from "../types.js";
+import {
+  createOmpOAuthCredentialBroker,
+  type LocalOAuthResolution,
+} from "./local-oauth-credential.js";
 import {
   failedProvider,
   sourceNames,
@@ -81,6 +86,8 @@ export type AgyProbeRuntime = {
     path: string,
     timeoutMs: number,
   ): Promise<unknown>;
+  resolveOmpAntigravity?(): Promise<LocalOAuthResolution>;
+  inspectOmpAntigravity?(): Promise<LocalOAuthResolution["status"]>;
 };
 
 /**
@@ -173,6 +180,34 @@ export async function fetchQuotaWithRuntime(
     };
   }
 
+  if (runtime.resolveOmpAntigravity) {
+    attempts.push({ source: "omp:google-antigravity", status: "failed" });
+    try {
+      const quota = await fetchOmpAntigravityQuota(runtime);
+      attempts[attempts.length - 1] = {
+        source: "omp:google-antigravity",
+        status: "success",
+      };
+      return successProvider({
+        provider: "agy",
+        label: "Antigravity",
+        source: "omp:google-antigravity",
+        account: quota.account,
+        windows: quota.windows,
+        refreshedAt: quota.refreshedAt,
+        sourcesTried: sourceNames(attempts),
+        attempts,
+      });
+    } catch (error) {
+      const message = errorMessage(error);
+      attempts[attempts.length - 1] = {
+        source: "omp:google-antigravity",
+        status: message === "credentials_missing" ? "skipped" : "failed",
+        error: message,
+      };
+    }
+  }
+
   const finalError = errorMessage(finalFailure);
   if (staleEligibleFailure(finalFailure)) {
     const cached = readCachedProvider("agy");
@@ -207,32 +242,32 @@ export async function inspectAuth(
 export async function inspectAuthWithRuntime(
   runtime: AgyProbeRuntime,
 ): Promise<AuthProviderReport> {
+  const sources: AuthProviderReport["sources"] = [];
   try {
     const endpoints = await discoverAgyEndpoints(
       runtime,
       createProbeDeadline(),
     );
-    return {
-      provider: "agy",
-      sources: [
-        {
-          source: "loopback",
-          status: endpoints.length > 0 ? "available" : "missing",
-        },
-      ],
-    };
+    sources.push({
+      source: "loopback",
+      status: endpoints.length > 0 ? "available" : "missing",
+    });
   } catch (error) {
-    return {
-      provider: "agy",
-      sources: [
-        {
-          source: "loopback",
-          status: "error",
-          error: errorMessage(error),
-        },
-      ],
-    };
+    sources.push({
+      source: "loopback",
+      status: "error",
+      error: errorMessage(error),
+    });
   }
+  if (runtime.inspectOmpAntigravity) {
+    const status = await runtime.inspectOmpAntigravity();
+    sources.push({
+      source: "omp:google-antigravity",
+      status: status === "unsupported" ? "invalid" : status,
+      ...(status === "expired" ? { error: "credentials_expired" } : {}),
+    });
+  }
+  return { provider: "agy", sources };
 }
 
 async function fetchCliQuota(runtime: AgyProbeRuntime): Promise<{
@@ -1249,7 +1284,158 @@ function httpErrorMessage(status: number): string {
   return `Antigravity quota endpoint returned HTTP ${status}`;
 }
 
+const OMP_ANTIGRAVITY_BASE_URL = "https://daily-cloudcode-pa.googleapis.com";
+const OMP_ANTIGRAVITY_TIMEOUT_MS = 15_000;
+const OMP_ANTIGRAVITY_QUOTA_PATH = "/v1internal:retrieveUserQuotaSummary";
+const OMP_ANTIGRAVITY_MODELS_PATH = "/v1internal:fetchAvailableModels";
+
+async function fetchOmpAntigravityQuota(runtime: AgyProbeRuntime): Promise<{
+  account?: ProviderQuota["account"];
+  windows: QuotaWindow[];
+  refreshedAt: string;
+}> {
+  const resolution = await runtime.resolveOmpAntigravity!();
+  if (resolution.status === "missing") throw new Error("credentials_missing");
+  if (resolution.status !== "available") {
+    throw new Error(
+      resolution.status === "expired"
+        ? "credentials_expired"
+        : resolution.status === "unsupported"
+          ? "unsupported_credential_type"
+          : resolution.status === "invalid"
+            ? "credentials_invalid"
+            : "credential_resolution_failed",
+    );
+  }
+  const { accessToken, projectId, email } = resolution.credential;
+  if (!projectId) throw new Error("antigravity_project_id_missing");
+
+  const account = email ? { email } : undefined;
+  let summaryFailure: string | undefined;
+  try {
+    const summary = await requestOmpAntigravityJson(
+      `${OMP_ANTIGRAVITY_BASE_URL}${OMP_ANTIGRAVITY_QUOTA_PATH}`,
+      accessToken,
+      projectId,
+    );
+    const normalized = normalizeAgyQuotaSummary(summary);
+    if (normalized && normalized.windows.length > 0) {
+      return { ...normalized, account };
+    }
+    summaryFailure = "Antigravity quota summary malformed";
+  } catch (error) {
+    summaryFailure = errorMessage(error);
+  }
+
+  try {
+    const models = await requestOmpAntigravityJson(
+      `${OMP_ANTIGRAVITY_BASE_URL}${OMP_ANTIGRAVITY_MODELS_PATH}`,
+      accessToken,
+      projectId,
+    );
+    const windows = normalizeOmpAntigravityModels(models);
+    if (windows.length > 0) return { windows, refreshedAt: nowIso(), account };
+  } catch {
+    summaryFailure ??= "Antigravity quota unavailable";
+  }
+  throw new Error(summaryFailure ?? "Antigravity quota unavailable");
+}
+
+async function requestOmpAntigravityJson(
+  url: string,
+  accessToken: string,
+  projectId: string,
+): Promise<unknown> {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(),
+    OMP_ANTIGRAVITY_TIMEOUT_MS,
+  );
+  try {
+    let response: Response;
+    try {
+      response = await providerFetch(url, {
+        method: "POST",
+        redirect: "error",
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          "content-type": "application/json",
+          "user-agent": "antigravity",
+        },
+        body: JSON.stringify({ project: projectId }),
+        signal: controller.signal,
+      });
+    } catch {
+      throw new Error(
+        controller.signal.aborted
+          ? "Antigravity quota request timed out"
+          : "Antigravity quota request failed",
+      );
+    }
+    if (!response.ok) throw new Error(httpErrorMessage(response.status));
+    const declared = Number(response.headers.get("content-length"));
+    if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
+      throw new Error("Antigravity quota response too large");
+    }
+    let text: string;
+    try {
+      text = await response.text();
+    } catch {
+      throw new Error("Antigravity quota response unreadable");
+    }
+    if (Buffer.byteLength(text) > MAX_RESPONSE_BYTES) {
+      throw new Error("Antigravity quota response too large");
+    }
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      throw new Error("Antigravity quota response malformed");
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function normalizeOmpAntigravityModels(raw: unknown): QuotaWindow[] {
+  const models = objectValue(objectValue(raw)?.models);
+  if (!models) return [];
+  const windows: QuotaWindow[] = [];
+  for (const [modelId, rawModel] of Object.entries(models)) {
+    const model = objectValue(rawModel);
+    if (!model) continue;
+    const entries: unknown[] = [];
+    for (const key of [
+      "quotaInfo",
+      "quotaInfos",
+      "dailyQuotaInfo",
+      "dailyQuotaInfos",
+      "weeklyQuotaInfo",
+      "weeklyQuotaInfos",
+    ]) {
+      const value = model[key];
+      if (Array.isArray(value)) entries.push(...value);
+      else if (value !== undefined) entries.push(value);
+    }
+    for (const entry of entries) {
+      const quotaInfo = objectValue(entry);
+      if (!quotaInfo) continue;
+      const normalized = normalizeModelConfigWindow({
+        label: stringValue(model.displayName) ?? modelId,
+        modelOrAlias: { model: modelId },
+        quotaInfo,
+      });
+      if (normalized) windows.push(normalized);
+    }
+  }
+  return windows.sort(compareAgyWindows);
+}
+
 const defaultRuntime: AgyProbeRuntime = {
+  resolveOmpAntigravity: () =>
+    createOmpOAuthCredentialBroker("google-antigravity").resolve(),
+  inspectOmpAntigravity: async () =>
+    (await createOmpOAuthCredentialBroker("google-antigravity").resolve())
+      .status,
   findCommandPath: async (command) => {
     const { findCommandPath } = await import("../lib/process.js");
     return findCommandPath(command);

@@ -50,6 +50,11 @@ import {
 import { withUsageFetchFailure } from "./usage-fetch-failure.js";
 import { fetchClaudeNativeQuota } from "./claude-native-quota.js";
 import { traceInput } from "../lib/input-trace.js";
+import {
+  createOmpOAuthCredentialBroker,
+  createPiAnthropicCredentialBroker,
+  type LocalOAuthBroker,
+} from "./local-oauth-credential.js";
 
 const API_URL = "https://api.anthropic.com/api/oauth/usage";
 const PROFILE_API_URL = "https://api.anthropic.com/api/oauth/profile";
@@ -69,7 +74,7 @@ const FIVE_HOURS_SECONDS = 18_000;
 const SEVEN_DAYS_SECONDS = 604_800;
 
 type ClaudeCredentials = {
-  source: "env" | "oauth-file" | "keychain";
+  source: "env" | "oauth-file" | "keychain" | "pi:anthropic" | "omp:anthropic";
   accessToken: string;
   plan?: string;
   expiresAt?: number;
@@ -123,6 +128,7 @@ type ClaudeProfileLocations = {
   keychainAccount: string;
   keychainService: string;
   acceptsOpaqueDefaultItem: boolean;
+  secureStorageSelected: boolean;
   keychainPath?: string;
   keychainAccessMarker: string;
 };
@@ -584,23 +590,28 @@ async function attemptClaudeQuota(
         return -1;
       if (b.credentials.source === "env" && a.credentials.source !== "env")
         return 1;
-      if (process.platform === "darwin") {
-        if (
-          a.credentials.source === "keychain" &&
-          b.credentials.source !== "keychain"
-        )
-          return -1;
-        if (
-          b.credentials.source === "keychain" &&
-          a.credentials.source !== "keychain"
-        )
-          return 1;
-      }
+      const sourcePriority = (source: ClaudeCredentials["source"]): number => {
+        if (source === "env") return 0;
+        if (process.platform === "darwin" && source === "keychain") return 1;
+        if (source === "oauth-file") return 2;
+        if (source === "pi:anthropic") return 3;
+        return 4;
+      };
+      const priorityDifference =
+        sourcePriority(a.credentials.source) -
+        sourcePriority(b.credentials.source);
+      if (priorityDifference !== 0) return priorityDifference;
       return (b.credentials.expiresAt ?? 0) - (a.credentials.expiresAt ?? 0);
     });
 
   for (const state of credentialStates) {
     if (state.status === "available" || state.status === "expired") continue;
+    if (
+      state.status === "missing" &&
+      (state.source.source === "pi:anthropic" ||
+        state.source.source === "omp:anthropic")
+    )
+      continue;
     if (state.status === "skipped") {
       const attempt: SourceAttempt = {
         source: state.source.source,
@@ -624,6 +635,7 @@ async function attemptClaudeQuota(
 
   let definitiveFailure: ClaudeFailure | undefined;
   let definitiveFailureIsEnv = false;
+  let definitiveFailureSource: ClaudeCredentials["source"] | undefined;
   let transientFailure: ClaudeFailure | undefined;
   let transientFailureIsEnv = false;
   let confirmedExpiryFailure: ClaudeFailure | undefined;
@@ -718,6 +730,7 @@ async function attemptClaudeQuota(
           if (!definitiveFailure) {
             definitiveFailure = failure;
             definitiveFailureIsEnv = credential.source === "env";
+            definitiveFailureSource = credential.source;
           }
           // The env token names the account a live session actually uses, so
           // its own definitive rejection is a verdict on that session: it must
@@ -833,7 +846,9 @@ async function attemptClaudeQuota(
     failure,
     refreshableExpiredRejected:
       failure === definitiveFailure &&
-      failure.authStatus === "expired_refreshable",
+      failure.authStatus === "expired_refreshable" &&
+      (definitiveFailureSource === "oauth-file" ||
+        definitiveFailureSource === "keychain"),
     keychainWithheld: credentialStates.some(
       (state) =>
         state.status === "skipped" && state.source.source === "keychain",
@@ -1164,20 +1179,81 @@ async function readCredentialStates(
     const selection = await listKeychainItem(locations);
     if (selection.status === "missing") {
       states.push(keychainPresenceState("missing"));
-      return states;
-    }
-    // Inconclusive metadata never establishes sign-out. The exact vendor
-    // service/account lookup still searches the whole Keychain search list.
-    if (selection.status === "present")
-      locations = withDiscoveredKeychainItem(locations, selection.item);
-    if (options.allowKeychainPrompt || hasKeychainAccessMarker(locations)) {
-      states.push(await readKeychainCredentialState(locations));
     } else {
-      states.push(await readSkippedKeychainCredentialState(locations));
+      // Inconclusive metadata never establishes sign-out. The exact vendor
+      // service/account lookup still searches the whole Keychain search list.
+      if (selection.status === "present")
+        locations = withDiscoveredKeychainItem(locations, selection.item);
+      if (options.allowKeychainPrompt || hasKeychainAccessMarker(locations)) {
+        states.push(await readKeychainCredentialState(locations));
+      } else {
+        states.push(await readSkippedKeychainCredentialState(locations));
+      }
     }
   }
 
+  if (!locations.secureStorageSelected) {
+    states.push(
+      await localCredentialState(
+        "pi:anthropic",
+        createPiAnthropicCredentialBroker(),
+      ),
+    );
+    states.push(
+      await localCredentialState(
+        "omp:anthropic",
+        createOmpOAuthCredentialBroker("anthropic"),
+      ),
+    );
+  }
   return states;
+}
+
+async function localCredentialState(
+  source: "pi:anthropic" | "omp:anthropic",
+  broker: LocalOAuthBroker,
+): Promise<CredentialState> {
+  const resolution = await broker.resolve();
+  if (resolution.status === "available" || resolution.status === "expired") {
+    const credentials: ClaudeCredentials = {
+      source,
+      accessToken: resolution.credential.accessToken,
+      expiresAt: resolution.credential.expiresAt,
+    };
+    return resolution.status === "available"
+      ? { status: "available", credentials }
+      : {
+          status: "expired",
+          credentials,
+          refreshable: resolution.refreshable,
+          source: { source, status: "expired" },
+        };
+  }
+  if (resolution.status === "missing") {
+    return { status: "missing", source: { source, status: "missing" } };
+  }
+  if (resolution.status === "error") {
+    return {
+      status: "skipped",
+      degraded: true,
+      source: {
+        source,
+        status: "skipped",
+        error: "credential_resolution_failed",
+      },
+    };
+  }
+  return {
+    status: "invalid",
+    source: {
+      source,
+      status: "invalid",
+      error:
+        resolution.status === "unsupported"
+          ? "unsupported_credential_type"
+          : "invalid_credential",
+    },
+  };
 }
 
 async function readSkippedKeychainCredentialState(
@@ -1472,6 +1548,7 @@ function resolveClaudeProfileLocations(): ClaudeProfileLocations {
     keychainAccount,
     keychainService,
     acceptsOpaqueDefaultItem,
+    secureStorageSelected,
     keychainAccessMarker: claudeKeychainAccessMarkerPath(
       keychainAccount,
       keychainService,
