@@ -201,7 +201,8 @@ export function staleFromCache(
   now: number = Date.now(),
 ): ProviderQuota | undefined {
   const windows = servableStaleWindows(cached, now);
-  if (windows.length === 0) return undefined;
+  if (windows.length === 0 && !(cached.provider === "devin" && cached.credits))
+    return undefined;
   const state: ProviderQuota["state"] = {
     ...cached.state,
     status: "stale",

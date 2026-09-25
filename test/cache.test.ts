@@ -916,6 +916,69 @@ oauth_host = "https://auth.kimi.ai"
     },
   );
 
+  it("round-trips Devin credit-only readings without reusing expired or empty balances", () => {
+    useTempCache();
+    const contextId = devinCacheContextId(
+      "env:WINDSURF_API_KEY",
+      "https://server.codeium.com",
+      "synthetic-devin-cache-key",
+    );
+    publishDevinReadingContextId(contextId);
+    const snapshot = quotaWithoutWindows("devin");
+    snapshot.source = "api";
+    snapshot.credits = {
+      buckets: [
+        {
+          id: "prompt",
+          used: 7,
+          available: 14,
+          unit: "credits",
+          resetsAt: "2026-07-06T18:11:00.000Z",
+        },
+      ],
+    };
+    stampReadingInputs(snapshot, { paths: [], digest: inputsDigest([]) });
+    writeCachedProviders([snapshot], "2026-07-06T18:10:00Z");
+
+    vi.useFakeTimers();
+    try {
+      const now = Date.parse("2026-07-06T18:10:30.000Z");
+      vi.setSystemTime(now);
+      const cached = readCachedDevinProvider(contextId);
+      expect(cached).toMatchObject({ windows: [], credits: snapshot.credits });
+      expect(
+        staleFromCache(cached!, "provider_timeout", ["api"], [], now),
+      ).toMatchObject({
+        source: "cache",
+        windows: [],
+        credits: snapshot.credits,
+        state: { status: "stale" },
+      });
+      expect(readReusableProviders("devin", 120, now)).toMatchObject([
+        { windows: [], credits: snapshot.credits, state: { reused: true } },
+      ]);
+      expect(
+        readSnapshotProviders(cacheFilePath(), "devin", now),
+      ).toMatchObject([{ windows: [], credits: snapshot.credits }]);
+
+      vi.setSystemTime(Date.parse("2026-07-06T18:11:01.000Z"));
+      expect(readCachedDevinProvider(contextId)).toBeUndefined();
+      expect(readReusableProviders("devin", 120, Date.now())).toBeUndefined();
+      expect(readSnapshotProviders(cacheFilePath(), "devin", Date.now())).toBe(
+        "expired",
+      );
+
+      writeCachedProviders([quotaWithoutWindows("devin")]);
+      vi.setSystemTime(now);
+      expect(readCachedDevinProvider(contextId)).toBeUndefined();
+      expect(
+        readSnapshotProviders(cacheFilePath(), "devin", now),
+      ).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("preserves Devin supplemental buckets across a same-context cache read", () => {
     useTempCache();
     const contextId = devinCacheContextId(

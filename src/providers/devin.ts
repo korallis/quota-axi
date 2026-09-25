@@ -1438,15 +1438,19 @@ function creditsFromMicros(
       const usedValue = integerValue(planStatus[usedKey]);
       const availableValue = integerValue(planStatus[availableKey]);
       const limitValue = integerValue(planInfo?.[limitKey]);
-      const used = Math.max(0, usedValue ?? 0);
-      const available = Math.max(0, availableValue ?? 0);
+      if (
+        usedValue === undefined ||
+        usedValue < 0 ||
+        availableValue === undefined ||
+        availableValue < 0
+      )
+        continue;
       const limit =
         limitValue !== undefined && limitValue > 0 ? limitValue : undefined;
-      if (used === 0 && available === 0 && limit === undefined) continue;
       buckets.push({
         id,
-        used,
-        available,
+        used: usedValue,
+        available: availableValue,
         unit: "credits",
         ...(limit !== undefined ? { limit } : {}),
         ...(startsAt ? { startsAt } : {}),

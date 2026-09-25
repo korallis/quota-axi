@@ -546,6 +546,45 @@ describe("Devin credential matrix", () => {
     ).toEqual([]);
   });
 
+  it("requires vendor counts for each credit bucket independently of monthly caps", () => {
+    const normalized = normalizeDevinPayload(
+      {
+        userStatus: {
+          planStatus: {
+            usedFlowCredits: -2,
+            availableFlowCredits: 9,
+            usedFlexCredits: 0,
+            availableFlexCredits: 0,
+          },
+        },
+        planInfo: {
+          monthlyPromptCredits: 100,
+          monthlyFlowCredits: 200,
+          monthlyFlexCreditPurchaseAmount: 50,
+        },
+      },
+      NOW,
+    );
+    expect(normalized.windows).toEqual([]);
+    expect(normalized.credits?.buckets).toEqual([
+      { id: "flex", used: 0, available: 0, limit: 50, unit: "credits" },
+    ]);
+    expect(
+      normalizeDevinPayload(
+        {
+          userStatus: {
+            planStatus: {
+              usedPromptCredits: "invalid",
+              availablePromptCredits: 4,
+            },
+          },
+          planInfo: { monthlyPromptCredits: 100 },
+        },
+        NOW,
+      ).credits,
+    ).toBeUndefined();
+  });
+
   it("omits expired native credit buckets without altering quota windows or overage balance", () => {
     const payload = structuredClone(PRO) as DevinTestPayload;
     Object.assign(payload.userStatus.planStatus, {

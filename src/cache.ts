@@ -328,9 +328,17 @@ export function readSnapshotProviders(
 
 /** Whether no window of this reading has reached its own reported reset. */
 function stillCurrent(record: CachedProvider, now: number): boolean {
-  return record.snapshot.windows.every(
-    (window) =>
-      window.resetsAt === undefined || Date.parse(window.resetsAt) > now,
+  const snapshot = record.snapshot;
+  return (
+    hasCachedMeasure(
+      snapshot.provider,
+      snapshot.windows,
+      servableCachedSnapshot(snapshot, now).credits,
+    ) &&
+    snapshot.windows.every(
+      (window) =>
+        window.resetsAt === undefined || Date.parse(window.resetsAt) > now,
+    )
   );
 }
 
@@ -363,8 +371,12 @@ export function readCachedProvider(
   accountKey?: string,
 ): ProviderQuota | undefined {
   const record = readCachedRecord(provider, accountKey);
-  return record
+  const snapshot = record
     ? servableCachedSnapshot(record.snapshot, Date.now())
+    : undefined;
+  return snapshot &&
+    hasCachedMeasure(snapshot.provider, snapshot.windows, snapshot.credits)
+    ? snapshot
     : undefined;
 }
 
@@ -509,8 +521,12 @@ function readCachedProviderInContext(
       item.snapshot.provider === provider &&
       item.credentialContextId === contextId,
   );
-  return record
+  const snapshot = record
     ? servableCachedSnapshot(record.snapshot, Date.now())
+    : undefined;
+  return snapshot &&
+    hasCachedMeasure(snapshot.provider, snapshot.windows, snapshot.credits)
+    ? snapshot
     : undefined;
 }
 
@@ -528,7 +544,11 @@ export function writeCachedProviders(
       .filter(
         (provider) =>
           provider.state.status === "fresh" &&
-          provider.windows.length === 0 &&
+          !hasCachedMeasure(
+            provider.provider,
+            provider.windows,
+            provider.credits,
+          ) &&
           !missingRequiredContext(provider.provider),
       )
       .map(cacheIdentity),
@@ -743,8 +763,25 @@ function parseCacheProviders(raw: unknown): CachedProvider[] | undefined {
     .filter((provider): provider is CachedProvider => Boolean(provider));
 }
 
+function hasCachedMeasure(
+  provider: ProviderId,
+  windows: QuotaWindow[],
+  credits: ProviderQuota["credits"],
+): boolean {
+  return (
+    windows.length > 0 ||
+    (provider === "devin" &&
+      ((credits?.remaining !== undefined && credits.remaining >= 0) ||
+        credits?.unlimited === true ||
+        Boolean(credits?.buckets?.length)))
+  );
+}
+
 function toCacheProvider(provider: ProviderQuota): CachedProvider | undefined {
-  if (provider.state.status !== "fresh" || provider.windows.length === 0)
+  if (
+    provider.state.status !== "fresh" ||
+    !hasCachedMeasure(provider.provider, provider.windows, provider.credits)
+  )
     return undefined;
   const snapshot = normalizeCachedProvider(
     {
@@ -879,6 +916,7 @@ function normalizeCachedProvider(
           provider === "kimi" ? upgradeLegacyKimiShareWindow(window) : window,
         )
     : [];
+  const credits = normalizeCachedCredits(data.credits);
   if (
     !provider ||
     !label ||
@@ -886,7 +924,7 @@ function normalizeCachedProvider(
     !state ||
     !status ||
     !sourcesTried ||
-    windows.length === 0 ||
+    !hasCachedMeasure(provider, windows, credits) ||
     (provider === "codex" && hasInvalidCodexWindowIdentities(windows))
   )
     return undefined;
@@ -914,7 +952,6 @@ function normalizeCachedProvider(
   const plan = stringValue(data.plan);
   const refreshedAt = stringValue(state.refreshedAt);
   const untrustedWindowIds = stringArrayValue(state.untrustedWindowIds);
-  const credits = normalizeCachedCredits(data.credits);
   if (plan) snapshot.plan = plan;
   if (refreshedAt) snapshot.state.refreshedAt = refreshedAt;
   if (untrustedWindowIds)
