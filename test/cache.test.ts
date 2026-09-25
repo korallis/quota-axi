@@ -1030,6 +1030,45 @@ oauth_host = "https://auth.kimi.ai"
     }
   });
 
+  it("persists a resetless Devin balance without serving it as stale or from a snapshot", () => {
+    useTempCache();
+    const contextId = devinCacheContextId(
+      "env:WINDSURF_API_KEY",
+      "https://server.codeium.com",
+      "synthetic-devin-cache-key",
+    );
+    publishDevinReadingContextId(contextId);
+    const snapshot = quotaWithoutWindows("devin");
+    snapshot.credits = { remaining: 2.5, unit: "usd" };
+    stampReadingInputs(snapshot, { paths: [], digest: inputsDigest([]) });
+    vi.useFakeTimers();
+    try {
+      const now = Date.parse("2026-07-06T18:10:30.000Z");
+      vi.setSystemTime(now);
+      writeCachedProviders([snapshot]);
+      expect(readCachedDevinProvider(contextId)?.credits).toEqual(
+        snapshot.credits,
+      );
+      expect(readReusableProviders("devin", 120, now)?.[0].credits).toEqual(
+        snapshot.credits,
+      );
+      expect(
+        staleFromCache(
+          readCachedDevinProvider(contextId)!,
+          "request_timeout",
+          ["api"],
+          [],
+          now,
+        ),
+      ).toBeUndefined();
+      expect(readSnapshotProviders(cacheFilePath(), "devin", now)).toBe(
+        "expired",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("preserves Devin supplemental buckets across a same-context cache read", () => {
     useTempCache();
     const contextId = devinCacheContextId(
@@ -1124,8 +1163,6 @@ oauth_host = "https://auth.kimi.ai"
       expect(
         staleFromCache(cached!, "request_timeout", ["api"], [], after)?.credits,
       ).toEqual({
-        remaining: 5,
-        unit: "usd",
         buckets: [snapshot.credits?.buckets?.[1]],
       });
       const reused = readReusableProviders("devin", 120, after);
@@ -1137,8 +1174,6 @@ oauth_host = "https://auth.kimi.ai"
       ).toMatchObject([
         {
           credits: {
-            remaining: 5,
-            unit: "usd",
             buckets: [snapshot.credits?.buckets?.[1]],
           },
           windows: [{ percentUsed: 40 }],

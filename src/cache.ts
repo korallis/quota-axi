@@ -331,14 +331,14 @@ export function readSnapshotProviders(
 function stillCurrent(
   record: CachedProvider,
   now: number,
-  includeResetlessBuckets = true,
+  includeResetlessCredits = true,
 ): boolean {
   const snapshot = record.snapshot;
   return (
     hasCachedMeasure(
       snapshot.provider,
       snapshot.windows,
-      servableCachedSnapshot(snapshot, now, includeResetlessBuckets).credits,
+      servableCachedSnapshot(snapshot, now, includeResetlessCredits).credits,
     ) &&
     snapshot.windows.every(
       (window) =>
@@ -350,13 +350,13 @@ function stillCurrent(
 function reusedReading(
   record: CachedProvider,
   now: number,
-  includeResetlessBuckets = true,
+  includeResetlessCredits = true,
 ): ProviderQuota {
   const { reuse } = record;
   const snapshot = servableCachedSnapshot(
     record.snapshot,
     now,
-    includeResetlessBuckets,
+    includeResetlessCredits,
   );
   return {
     ...snapshot,
@@ -396,18 +396,20 @@ export function readCachedProvider(
 export function servableCachedSnapshot(
   snapshot: ProviderQuota,
   now: number,
-  includeResetlessBuckets = true,
+  includeResetlessCredits = true,
 ): ProviderQuota {
-  if (snapshot.provider !== "devin" || !snapshot.credits?.buckets?.length)
-    return snapshot;
-  const buckets = snapshot.credits.buckets.filter(
+  if (snapshot.provider !== "devin" || !snapshot.credits) return snapshot;
+  const credits = { ...snapshot.credits };
+  if (!includeResetlessCredits) {
+    delete credits.remaining;
+    delete credits.unit;
+  }
+  const buckets = credits.buckets?.filter(
     (bucket) =>
-      (includeResetlessBuckets || bucket.resetsAt !== undefined) &&
+      (includeResetlessCredits || bucket.resetsAt !== undefined) &&
       (!bucket.resetsAt || Date.parse(bucket.resetsAt) > now),
   );
-  if (buckets.length === snapshot.credits.buckets.length) return snapshot;
-  const credits = { ...snapshot.credits };
-  if (buckets.length > 0) credits.buckets = buckets;
+  if (buckets?.length) credits.buckets = buckets;
   else delete credits.buckets;
   return {
     ...snapshot,
