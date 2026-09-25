@@ -1193,6 +1193,47 @@ describe("CLI quota rendering", () => {
     expect(json.providers[0]?.windows[0]?.pace?.reservePercentPoints).toBe(-1);
   });
 
+  it("includes Devin organization ID in full TOON account identity", async () => {
+    useTempCache();
+    PROVIDERS.devin = providerWithQuota({
+      provider: "devin",
+      label: "Devin",
+      source: "omp:devin",
+      account: {
+        email: "devin@example.invalid",
+        organization: "Example Organization",
+        organizationId: "org-fixture",
+        accountId: "account-fixture",
+      },
+      windows: [
+        {
+          id: "weekly",
+          label: "week",
+          kind: "weekly",
+          percentUsed: 40,
+          percentRemaining: 60,
+        },
+      ],
+      state: { status: "fresh", stale: false, sourcesTried: ["omp:devin"] },
+    });
+
+    const full = await capture(["--provider", "devin", "--full"]);
+    expect(toonRows(full, "accounts")).toEqual([
+      [
+        "devin",
+        "devin@example.invalid",
+        "Example Organization",
+        "org-fixture",
+        "account-fixture",
+        "unknown",
+      ],
+    ]);
+    const json = JSON.parse(
+      await capture(["--provider", "devin", "--json", "--full"]),
+    ) as QuotaAxiResponse;
+    expect(json.providers[0]?.account?.organizationId).toBe("org-fixture");
+  });
+
   it("renders Kimi remaining quota in compact TOON and normalized JSON", async () => {
     useTempCache();
     PROVIDERS.kimi = providerWithQuota(freshKimiQuota());

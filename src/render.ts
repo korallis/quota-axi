@@ -513,6 +513,7 @@ function auditBlocks(response: QuotaAxiResponse): string[] {
     ...providerColumns(provider),
     email: provider.account?.email ?? "hidden",
     organization: provider.account?.organization ?? NONE,
+    organizationId: provider.account?.organizationId ?? NONE,
     accountId: provider.account?.accountId ?? NONE,
     identityStatus: provider.account?.identityStatus ?? UNKNOWN,
   }));

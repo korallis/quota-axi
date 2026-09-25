@@ -1735,6 +1735,45 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
     );
   });
 
+  it("reports an explicit product-only OMP limit without a shared credit bound", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        grpcResponse(
+          consumerPayload({
+            includePercent: false,
+            includePeriodEnd: false,
+            includePrepaid: false,
+            products: [{ product: 2, usagePercent: 100 }],
+          }),
+        ),
+      ),
+    );
+    const report = await createGrokAdapter({
+      ompBroker: {
+        resolve: async () => ({
+          status: "available",
+          credential: { accessToken: "synthetic-omp-access" },
+        }),
+        inspect: async () => ({ status: "available" }),
+      },
+    }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+    const interpreted = withQuotaSemantics(report, "2026-07-23T07:05:00.000Z");
+
+    expect(report.source).toBe("omp:xai-oauth");
+    expect(report.state).toMatchObject({ status: "fresh", authStatus: "usable" });
+    expect(report.windows).toEqual([
+      expect.objectContaining({ id: "product:grok_build", percentRemaining: 0 }),
+    ]);
+    expect(interpreted.quotaSemantics?.effectiveAvailability).toEqual([
+      expect.objectContaining({
+        scope: "product:grok_build",
+        effectivePercentRemaining: 0,
+        boundedBy: ["product:grok_build"],
+      }),
+    ]);
+  });
+
   it.each(["pi", "cli"] as const)(
     "keeps $source live model auth when a separate expired OMP token is rejected",
     async (source) => {
@@ -1856,8 +1895,8 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
       expect(report.state).toMatchObject({
         status: failure === "rate_limit" ? "rate_limited" : "error",
         stale: false,
-        authStatus: "usable",
       });
+      expect(report.state.authStatus).toBeUndefined();
       if (failure === "rate_limit")
         expect(report.state.retryAfter).toBeDefined();
       expect(report.attempts).toContainEqual(

@@ -313,10 +313,6 @@ async function fetchQuotaWithDependencies(
           key: resolution.credential.accessToken,
           email: resolution.credential.email,
         });
-        const creditsWindow = quota.windows.find(
-          (window) => window.id === "credits",
-        );
-        if (!creditsWindow) throw new Error("Grok credits window unavailable");
         attempts.push({ source: "omp:xai-oauth", status: "success" });
         return withAuthStatus(
           successProvider({
@@ -388,11 +384,13 @@ async function fetchQuotaWithDependencies(
     selection,
   );
   const authStatus =
-    localAuthStatus === "usable" || ompTransientError !== undefined
-      ? "usable"
-      : ompRefreshableExpiredRejected
-        ? "expired_refreshable"
-        : localAuthStatus;
+    ompTransientError !== undefined && localAuthStatus === "unusable"
+      ? undefined
+      : localAuthStatus === "usable"
+        ? "usable"
+        : ompRefreshableExpiredRejected
+          ? "expired_refreshable"
+          : localAuthStatus;
 
   if (authStatus === "usable" || transientError !== undefined) {
     // Valid model auth (CLI and/or Pi) without consumer windows is not logout.
@@ -914,7 +912,7 @@ function piSourceAttempt(resolution: PiXaiCredentialResolution): SourceAttempt {
 
 function withAuthStatus(
   provider: ProviderQuota,
-  authStatus: ProviderAuthStatus,
+  authStatus: ProviderAuthStatus | undefined,
   cliRefreshNeeded: boolean,
 ): ProviderQuota {
   return {
@@ -922,7 +920,7 @@ function withAuthStatus(
     ...(cliRefreshNeeded ? { [GROK_CLI_REFRESH_NEEDED]: true as const } : {}),
     state: {
       ...provider.state,
-      authStatus,
+      ...(authStatus ? { authStatus } : {}),
     },
   };
 }
