@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
-  deleteCachedProvider as deleteCachedProviderFromDisk,
   readCachedDevinProvider as readCachedProviderFromDisk,
+  retireCachedDevinContext as retireCachedContextOnDisk,
 } from "../cache.js";
 import { providerFetch } from "../lib/http.js";
 import { usableLiteralSecret } from "../lib/secret.js";
@@ -136,7 +136,7 @@ type DevinDependencies = {
   ompBroker: LocalOAuthBroker;
   fetch: typeof globalThis.fetch;
   readCachedProvider: typeof readCachedProviderFromDisk;
-  deleteCachedProvider: (provider: "devin") => void;
+  retireCachedContext: (contextId: string) => void;
   now: () => number;
   deadlineMs: number;
 };
@@ -277,7 +277,7 @@ export function createDevinAdapter(
     ompBroker: createOmpOAuthCredentialBroker("devin"),
     fetch: providerFetch,
     readCachedProvider: readCachedProviderFromDisk,
-    deleteCachedProvider: () => deleteCachedProviderFromDisk("devin"),
+    retireCachedContext: retireCachedContextOnDisk,
     // Resolve Date at call time so a clock swapped in after load still applies
     now: () => Date.now(),
     deadlineMs: OPERATION_DEADLINE_MS,
@@ -490,7 +490,7 @@ async function acquireDevinQuota(
         error,
         credentialPresent: true,
       });
-      rejectedContextId = contextId;
+      retireMatchingCache(contextId, dependencies);
       rejectedFailure = new DevinFailure(error, {
         status: "auth_required",
         definitiveAuth: true,
@@ -713,9 +713,7 @@ function retireMatchingCache(
   dependencies: DevinDependencies,
 ): void {
   try {
-    if (dependencies.readCachedProvider(contextId)) {
-      dependencies.deleteCachedProvider("devin");
-    }
+    dependencies.retireCachedContext(contextId);
   } catch {
     // The current auth failure is still definitive even if the cache is not writable.
   }

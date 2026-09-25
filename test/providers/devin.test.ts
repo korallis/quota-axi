@@ -8,6 +8,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  readCachedDevinProvider,
+  readReusableProviders,
+  stampReadingInputs,
+  writeCachedProviders,
+} from "../../src/cache.js";
+import { inputsDigest } from "../../src/lib/input-trace.js";
 import type { LocalOAuthBroker } from "../../src/providers/local-oauth-credential.js";
 import { withQuotaSemantics } from "../../src/interpretation.js";
 import { renderQuotaToon } from "../../src/render.js";
@@ -761,7 +768,7 @@ describe("Devin credential matrix", () => {
     mutate(payload);
     const report = await testAdapter({
       fetch: sequentialFetch([jsonResponse(payload)]),
-      deleteCachedProvider: (provider) => deleted.push(provider),
+      retireCachedContext: (id) => deleted.push(id),
       readCachedProvider: (id) =>
         id === contextId ? cachedQuota() : undefined,
     }).fetchQuota(OPTIONS);
@@ -902,7 +909,7 @@ describe("Devin credential matrix", () => {
     );
     const report = await testAdapter({
       fetch: sequentialFetch([new Response(null, { status: 401 })]),
-      deleteCachedProvider: (provider) => deleted.push(provider),
+      retireCachedContext: (id) => deleted.push(id),
       readCachedProvider: (id) =>
         id === contextId ? cachedQuota() : undefined,
     }).fetchQuota(OPTIONS);
@@ -912,8 +919,68 @@ describe("Devin credential matrix", () => {
       error: "provider_auth_rejected",
       authStatus: "unusable",
     });
-    expect(deleted).toEqual(["devin"]);
+    expect(deleted).toEqual([contextId]);
   });
+
+  it.each(["transient", "expired_refreshable"] as const)(
+    "retires rejected native quota before OMP $failure can return",
+    async (failure) => {
+      tempDir = mkdtempSync(join(tmpdir(), "quota-axi-devin-cache-"));
+      const originalCacheHome = process.env.XDG_CACHE_HOME;
+      process.env.XDG_CACHE_HOME = tempDir;
+      try {
+        const contextId = devinCacheContextId(
+          DEVIN_ENV_SOURCE,
+          DEVIN_API_ORIGIN,
+          SYNTHETIC_KEY,
+        );
+        const initial = await testAdapter({
+          fetch: sequentialFetch([jsonResponse(PRO)]),
+        }).fetchQuota(OPTIONS);
+        stampReadingInputs(initial, { paths: [], digest: inputsDigest([]) });
+        writeCachedProviders([initial], new Date(NOW).toISOString());
+        expect(readCachedDevinProvider(contextId)?.windows).toHaveLength(2);
+        expect(
+          readReusableProviders("devin", 120, NOW + 1000)?.[0].state.reused,
+        ).toBe(true);
+
+        let calls = 0;
+        const request = vi.fn(async () => {
+          calls += 1;
+          if (calls === 1) return new Response(null, { status: 401 });
+          expect(readCachedDevinProvider(contextId)).toBeUndefined();
+          return new Response(null, {
+            status: failure === "transient" ? 503 : 401,
+          });
+        });
+        const report = await testAdapter({
+          fetch: request,
+          ompBroker: {
+            resolve: async () =>
+              failure === "transient"
+                ? {
+                    status: "available",
+                    credential: { accessToken: SESSION_TOKEN },
+                  }
+                : {
+                    status: "expired",
+                    credential: { accessToken: SESSION_TOKEN },
+                    refreshable: true,
+                  },
+          },
+        }).fetchQuota(OPTIONS);
+        expect(request).toHaveBeenCalledTimes(2);
+        expect(report.state.status).toBe(
+          failure === "transient" ? "error" : "unavailable",
+        );
+        expect(readCachedDevinProvider(contextId)).toBeUndefined();
+        expect(readReusableProviders("devin", 120, NOW + 1000)).toBeUndefined();
+      } finally {
+        if (originalCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
+        else process.env.XDG_CACHE_HOME = originalCacheHome;
+      }
+    },
+  );
 
   it("has no refresh delegate: refreshCredentials does not change the read", async () => {
     const adapter = testAdapter({
@@ -945,7 +1012,7 @@ describe("Devin credential matrix", () => {
           credential: { token: FILE_KEY, origin: DEVIN_API_ORIGIN },
         }),
       ],
-      deleteCachedProvider: (provider) => deleted.push(provider),
+      retireCachedContext: (id) => deleted.push(id),
       readCachedProvider: (id) =>
         id === contextId ? cachedQuota() : undefined,
     }).fetchQuota(OPTIONS);
@@ -999,7 +1066,7 @@ describe("Devin credential matrix", () => {
     );
     const report = await testAdapter({
       fetch: sequentialFetch([new Response(null, { status: 400 })]),
-      deleteCachedProvider: (provider) => deleted.push(provider),
+      retireCachedContext: (id) => deleted.push(id),
       readCachedProvider: (id) =>
         id === contextId ? cachedQuota() : undefined,
     }).fetchQuota(OPTIONS);
@@ -1194,7 +1261,7 @@ function testAdapter(
     sources: readonly DevinCredentialSource[];
     ompBroker?: LocalOAuthBroker;
     readCachedProvider: (contextId: string) => ProviderQuota | undefined;
-    deleteCachedProvider: (provider: "devin") => void;
+    retireCachedContext: (contextId: string) => void;
     deadlineMs: number;
   }> = {},
 ): ReturnType<typeof createDevinAdapter> {
@@ -1210,8 +1277,8 @@ function testAdapter(
     ...(overrides.readCachedProvider
       ? { readCachedProvider: overrides.readCachedProvider }
       : {}),
-    ...(overrides.deleteCachedProvider
-      ? { deleteCachedProvider: overrides.deleteCachedProvider }
+    ...(overrides.retireCachedContext
+      ? { retireCachedContext: overrides.retireCachedContext }
       : {}),
     ...(overrides.deadlineMs ? { deadlineMs: overrides.deadlineMs } : {}),
   });

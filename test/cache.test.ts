@@ -20,6 +20,7 @@ import {
   readCachedProvider,
   readReusableProviders,
   readSnapshotProviders,
+  retireCachedDevinContext,
   retireCodexAccount,
   writeCachedProviders,
   stampCodexStoredAccountId,
@@ -880,6 +881,40 @@ oauth_host = "https://auth.kimi.ai"
     expect(readCachedDevinProvider(otherId)).toBeUndefined();
     expect(readCachedProvider("devin")?.windows[0].percentUsed).toBe(40);
   });
+
+  it.each(["native", "omp"] as const)(
+    "retires only the rejected %s Devin context",
+    (rejected) => {
+      useTempCache();
+      const nativeId = devinCacheContextId(
+        "env:WINDSURF_API_KEY",
+        "https://server.codeium.com",
+        "native-fixture-key",
+      );
+      const ompId = devinCacheContextId(
+        "omp:devin",
+        "https://server.codeium.com",
+        "omp-fixture-key",
+      );
+      publishDevinReadingContextId(nativeId);
+      writeCachedProviders([{ ...quota("devin", 40), accountKey: "native" }]);
+      publishDevinReadingContextId(ompId);
+      writeCachedProviders([
+        { ...quota("devin", 20), accountKey: "omp", source: "omp:devin" },
+      ]);
+      expect(readCachedDevinProvider(nativeId)).toBeDefined();
+      expect(readCachedDevinProvider(ompId)).toBeDefined();
+
+      retireCachedDevinContext(rejected === "native" ? nativeId : ompId);
+      expect(
+        readCachedDevinProvider(rejected === "native" ? nativeId : ompId),
+      ).toBeUndefined();
+      expect(
+        readCachedDevinProvider(rejected === "native" ? ompId : nativeId)
+          ?.windows[0].percentUsed,
+      ).toBe(rejected === "native" ? 20 : 40);
+    },
+  );
 
   it("preserves Devin supplemental buckets across a same-context cache read", () => {
     useTempCache();
