@@ -666,40 +666,6 @@ async function fetchOmpCodexQuota(
     error,
     credentialPresent: true,
   });
-  if (selection.kind === "transient") {
-    return {
-      ...previous,
-      state: {
-        ...previous.state,
-        status:
-          selection.retryAfter || statusFromError(error) === "rate_limited"
-            ? "rate_limited"
-            : "error",
-        error,
-        retryAfter: selection.retryAfter,
-        sourcesTried: sourceNames(attempts),
-      },
-      attempts,
-    };
-  }
-  if (
-    selection.kind === "rejected" &&
-    resolution.status === "expired" &&
-    resolution.refreshable
-  ) {
-    return {
-      ...previous,
-      state: {
-        ...previous.state,
-        status: "unavailable",
-        stale: false,
-        error: "Codex access token expired",
-        authStatus: "expired_refreshable",
-        sourcesTried: sourceNames(attempts),
-      },
-      attempts,
-    };
-  }
   return {
     ...previous,
     state: { ...previous.state, sourcesTried: sourceNames(attempts) },

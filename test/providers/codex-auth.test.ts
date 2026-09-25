@@ -945,6 +945,57 @@ describe("Codex credential-state reporting", () => {
     },
   );
 
+  it("keeps the Pi verdict after an expired refreshable OMP token is rejected", async () => {
+    writePiAuth(piOauthEntry({ access: "rejected-pi-access-token" }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 401 })),
+    );
+    const { createCodexAdapter } =
+      await import("../../src/providers/codex.js");
+    const options = {
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+    };
+    const baseline = await createCodexAdapter({
+      ompBroker: {
+        resolve: async () => ({ status: "missing" }),
+        inspect: async () => ({ status: "missing" }),
+      },
+    }).fetchQuota(options);
+    const result = await createCodexAdapter({
+      ompBroker: {
+        resolve: async () => ({
+          status: "expired",
+          refreshable: true,
+          credential: { accessToken: "expired-omp-access-token" },
+        }),
+        inspect: async () => ({ status: "expired" }),
+      },
+    }).fetchQuota(options);
+
+    expect(baseline.state).toMatchObject({
+      status: "auth_required",
+      error: "Codex sign-in required",
+    });
+    expect(result.source).toBe(baseline.source);
+    expect(result.accountKeys).toEqual(baseline.accountKeys);
+    expect(result.state).toMatchObject({
+      status: baseline.state.status,
+      error: baseline.state.error,
+      stale: baseline.state.stale,
+    });
+    expect(result.state.authStatus).toBe(baseline.state.authStatus);
+    expect(result.attempts?.at(-1)).toMatchObject({
+      source: "omp:openai-codex",
+      status: "failed",
+      error: "Codex sign-in required",
+    });
+    expect(JSON.stringify(result)).not.toMatch(
+      /rejected-pi-access-token|expired-omp-access-token/,
+    );
+  });
+
   it("keeps a transient native probe failure over an expired Pi credential", async () => {
     const nativeToken = jwt({ exp: Math.floor(Date.now() / 1000) + 3600 });
     writeAuth({ tokens: { access_token: nativeToken } });
