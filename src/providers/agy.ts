@@ -127,6 +127,7 @@ export async function fetchQuotaWithRuntime(
   let finalFailure: unknown;
   let cliFailure: unknown;
   let loopbackFailure: unknown;
+  let ompFailure: unknown;
   let ompContextId: string | undefined;
 
   try {
@@ -225,7 +226,12 @@ export async function fetchQuotaWithRuntime(
         );
       } catch (error) {
         const message = errorMessage(error);
-        finalFailure = error;
+        ompFailure = error;
+        if (
+          !isDefinitiveAuthFailure(finalFailure) ||
+          isDefinitiveAuthFailure(error)
+        )
+          finalFailure = error;
         attempts[attempts.length - 1] = {
           source: "omp:google-antigravity",
           status: "failed",
@@ -246,10 +252,12 @@ export async function fetchQuotaWithRuntime(
         attempt.status === "failed" &&
         attempt.error === "Antigravity sign-in required",
     );
-  if (
-    cachedRejected ||
-    (isDefinitiveAuthFailure(finalFailure) &&
-      attempts.at(-1)?.source === "omp:google-antigravity")
+  if (cachedRejected) {
+    if (cached?.source === "cli") finalFailure = cliFailure;
+    if (cached?.source === "cli-rpc") finalFailure = loopbackFailure;
+  } else if (
+    isDefinitiveAuthFailure(ompFailure) &&
+    attempts.at(-1)?.source === "omp:google-antigravity"
   ) {
     if (cached?.source === "cli") finalFailure = cliFailure;
     if (cached?.source === "cli-rpc") finalFailure = loopbackFailure;
