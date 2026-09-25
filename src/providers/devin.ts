@@ -1295,12 +1295,15 @@ export function normalizeDevinPayload(
     ];
     let expectedCount = 0;
     for (const candidate of candidates) {
-      const hasPositiveReset =
-        (integerValue(planStatus[candidate.reset]) ?? 0) > 0;
+      const hasOwnReset = (integerValue(planStatus[candidate.reset]) ?? 0) > 0;
       if (
         candidate.hidden ||
-        (!quotaPlan && !hasPositiveReset) ||
-        (!hasPositiveReset && !quotaFields)
+        (!quotaPlan &&
+          !hasOwnReset &&
+          !(
+            hasPositiveReset && Object.hasOwn(planStatus, candidate.percent)
+          )) ||
+        (!hasOwnReset && !quotaFields)
       ) {
         continue;
       }

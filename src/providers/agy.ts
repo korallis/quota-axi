@@ -247,9 +247,9 @@ export async function fetchQuotaWithRuntime(
         attempt.error === "Antigravity sign-in required",
     );
   if (
-    !cachedRejected &&
-    isDefinitiveAuthFailure(finalFailure) &&
-    attempts.at(-1)?.source === "omp:google-antigravity"
+    cachedRejected ||
+    (isDefinitiveAuthFailure(finalFailure) &&
+      attempts.at(-1)?.source === "omp:google-antigravity")
   ) {
     if (cached?.source === "cli") finalFailure = cliFailure;
     if (cached?.source === "cli-rpc") finalFailure = loopbackFailure;

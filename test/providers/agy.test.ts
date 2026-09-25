@@ -1099,6 +1099,56 @@ describe("Antigravity provider", () => {
     });
   });
 
+  it.each([503, 429])(
+    "keeps the cached loopback rejection over OMP HTTP %i",
+    async (ompStatus) => {
+      writeCachedProviders([cachedAgyQuota()]);
+      const port = await startServer((response) => {
+        response.writeHead(401, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "synthetic rejection" }));
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response(null, { status: ompStatus })),
+      );
+
+      const result = await fetchQuotaWithRuntime({
+        ...runtimeWith({
+          ps: "123 /Users/test/.local/bin/agy\n",
+          lsof: lsofFor(123, port),
+          requestJson: requestLoopbackJson,
+        }),
+        async resolveOmpAntigravity() {
+          return {
+            status: "available" as const,
+            credential: {
+              accessToken: "synthetic-antigravity-access",
+              projectId: "synthetic-project",
+            },
+          };
+        },
+      });
+
+      expect(result.state).toMatchObject({
+        status: "auth_required",
+        error: "Antigravity sign-in required",
+      });
+      expect(result.windows).toEqual([]);
+      expect(result.attempts?.at(-1)).toMatchObject({
+        source: "omp:google-antigravity",
+        status: "failed",
+        error:
+          ompStatus === 503
+            ? "Antigravity quota endpoint returned HTTP 503"
+            : "Antigravity quota endpoint rate limited",
+      });
+      expect(readCachedProvider("agy")).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain(
+        "synthetic-antigravity-access",
+      );
+    },
+  );
+
   it("preserves authentication failures and retires stale cache", async () => {
     writeCachedProviders([cachedAgyQuota()]);
     const port = await startServer((_response) => {

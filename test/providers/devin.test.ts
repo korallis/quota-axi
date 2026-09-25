@@ -669,6 +669,43 @@ describe("Devin credential matrix", () => {
     },
   );
 
+  it.each([
+    {
+      percent: "dailyQuotaRemainingPercent",
+      reset: "dailyQuotaResetAtUnix",
+      id: "daily",
+    },
+    {
+      percent: "weeklyQuotaRemainingPercent",
+      reset: "weeklyQuotaResetAtUnix",
+      id: "weekly",
+    },
+  ])(
+    "retains the $id percentage without its own reset when the other window supplies evidence",
+    ({ percent, reset, id }) => {
+      const payload = structuredClone(PRO) as {
+        userStatus: { planStatus: Record<string, unknown> };
+        planInfo?: Record<string, unknown>;
+      };
+      delete payload.planInfo;
+      delete payload.userStatus.planStatus[reset];
+      payload.userStatus.planStatus[percent] = 23;
+
+      const normalized = normalizeDevinPayload(payload, NOW);
+      expect(normalized.windows.map((window) => window.id)).toEqual([
+        "weekly",
+        "daily",
+      ]);
+      expect(
+        normalized.windows.find((window) => window.id === id),
+      ).toMatchObject({
+        percentRemaining: 23,
+        percentUsed: 77,
+      });
+      expect(normalized.untrustedWindowIds).toEqual([]);
+    },
+  );
+
   it("keeps a reset-only window untrusted instead of inventing zero", () => {
     const normalized = normalizeDevinPayload(EXHAUSTED, NOW);
     expect(normalized.windows.map((window) => window.id)).toEqual([
