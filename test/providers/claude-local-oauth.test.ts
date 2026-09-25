@@ -14,6 +14,7 @@ const { DatabaseSync } = require("node:sqlite") as {
 };
 const originalHome = process.env.HOME;
 const originalPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
 let directories: string[] = [];
 
 afterEach(() => {
@@ -22,6 +23,9 @@ afterEach(() => {
   else process.env.HOME = originalHome;
   if (originalPiAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
   else process.env.PI_CODING_AGENT_DIR = originalPiAgentDir;
+  if (originalClaudeConfigDir === undefined)
+    delete process.env.CLAUDE_CONFIG_DIR;
+  else process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
   for (const directory of directories)
     rmSync(directory, { recursive: true, force: true });
   directories = [];
@@ -63,6 +67,60 @@ describe("Claude Pi and OMP OAuth quota sources", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps native Claude OAuth ahead of valid Pi and OMP candidates", async () => {
+    const home = temporaryDirectory();
+    process.env.HOME = home;
+    process.env.CLAUDE_CONFIG_DIR = join(home, ".claude");
+    delete process.env.PI_CODING_AGENT_DIR;
+    mkdirSync(process.env.CLAUDE_CONFIG_DIR, { recursive: true });
+    writeFileSync(
+      join(process.env.CLAUDE_CONFIG_DIR, ".credentials.json"),
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "synthetic-native-claude",
+          expiresAt: "2035-01-01T00:00:00.000Z",
+        },
+      }),
+      { mode: 0o600 },
+    );
+    const agent = join(home, ".pi", "agent");
+    mkdirSync(agent, { recursive: true });
+    writeFileSync(
+      join(agent, "auth.json"),
+      JSON.stringify({
+        anthropic: {
+          type: "oauth",
+          access: "synthetic-pi-claude",
+          expires: Date.now() + 60_000,
+        },
+      }),
+      { mode: 0o600 },
+    );
+    const fetchMock = vi.fn(async (input: string | URL | Request) =>
+      String(input).endsWith("/api/oauth/profile")
+        ? Response.json({ account: { uuid: "native-account" } })
+        : Response.json({ five_hour: { utilization: 10 } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchQuota } = await import("../../src/providers/claude.js");
+    const result = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+    });
+
+    expect(result.state.status).toBe("fresh");
+    expect(result.source).toBe("oauth");
+    expect(result.attempts).toContainEqual({
+      source: "oauth-file",
+      status: "success",
+    });
+    expect(result.attempts).not.toContainEqual(
+      expect.objectContaining({ source: "pi:anthropic" }),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it.each([
     ["Pi", "pi:anthropic", "synthetic-pi-anthropic", "pi"] as const,
     ["OMP", "omp:anthropic", "synthetic-omp-anthropic", "omp"] as const,
@@ -71,6 +129,7 @@ describe("Claude Pi and OMP OAuth quota sources", () => {
     async (_label, expectedSource, token, store) => {
       const home = temporaryDirectory();
       process.env.HOME = home;
+      process.env.CLAUDE_CONFIG_DIR = join(home, ".claude");
       delete process.env.PI_CODING_AGENT_DIR;
       if (store === "pi") {
         const agent = join(home, ".pi", "agent");
@@ -124,7 +183,7 @@ describe("Claude Pi and OMP OAuth quota sources", () => {
       });
 
       expect(result.state.status).toBe("fresh");
-      expect(result.source).toBe("oauth");
+      expect(result.source).toBe(expectedSource);
       expect(result.state.sourcesTried).toContain(expectedSource);
       expect(result.account?.accountId).toBe("synthetic-claude-account");
       expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -149,12 +208,18 @@ function writeOmpCredential(
   mkdirSync(dirname(databasePath), { recursive: true });
   const database = new DatabaseSync(databasePath);
   database.exec(
-    "CREATE TABLE auth_credentials (id INTEGER PRIMARY KEY, provider TEXT NOT NULL, credential_type TEXT NOT NULL, data TEXT NOT NULL, disabled_cause TEXT)",
+    "CREATE TABLE auth_credentials (id INTEGER PRIMARY KEY, provider TEXT NOT NULL, credential_type TEXT NOT NULL, data TEXT NOT NULL, disabled_cause TEXT, identity_key TEXT, updated_at TEXT)",
   );
   database
     .prepare(
-      "INSERT INTO auth_credentials (provider, credential_type, data) VALUES (?, ?, ?)",
+      "INSERT INTO auth_credentials (provider, credential_type, data, identity_key, updated_at) VALUES (?, ?, ?, ?, ?)",
     )
-    .run(provider, "oauth", JSON.stringify(data));
+    .run(
+      provider,
+      "oauth",
+      JSON.stringify(data),
+      `account-${provider}`,
+      "2026-09-25T00:00:00Z",
+    );
   database.close();
 }

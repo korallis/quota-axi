@@ -11,18 +11,34 @@ import { resolvePiAuthFilePath } from "../lib/pi-agent-dir.js";
 
 const PI_AUTH_LIMIT_BYTES = 64 * 1024;
 const OMP_DATABASE = [".omp", "agent", "agent.db"] as const;
+export const OMP_OAUTH_PROVIDERS = [
+  "openai-codex",
+  "anthropic",
+  "google-antigravity",
+  "kimi-code",
+  "xai-oauth",
+  "devin",
+] as const;
+export type OmpOAuthProvider = (typeof OMP_OAUTH_PROVIDERS)[number];
 
 registerInputPathResolver((identity) => {
   if (identity.startsWith("pi-auth:")) {
     const path = resolvePiAuthFilePath(process.env, homedir);
     return tracedStoreIdentity("pi-auth", path) === identity ? path : undefined;
   }
-  if (identity.startsWith("omp-agent-db:")) {
+  if (
+    identity.startsWith("omp-agent-db:") ||
+    identity.startsWith("omp-agent-db-wal:")
+  ) {
     const home = nonempty(process.env.HOME) ?? homedir();
-    const path = join(home, ...OMP_DATABASE);
-    return tracedStoreIdentity("omp-agent-db", path) === identity
-      ? path
-      : undefined;
+    const databasePath = join(home, ...OMP_DATABASE);
+    const path = identity.startsWith("omp-agent-db-wal:")
+      ? `${databasePath}-wal`
+      : databasePath;
+    const source = identity.startsWith("omp-agent-db-wal:")
+      ? "omp-agent-db-wal"
+      : "omp-agent-db";
+    return tracedStoreIdentity(source, path) === identity ? path : undefined;
   }
   return undefined;
 });
@@ -34,6 +50,7 @@ type StoredOAuthCredential = {
   accountId?: string;
   organization?: string;
   projectId?: string;
+  cacheIdentity?: string;
 };
 
 export type LocalOAuthResolution =
@@ -73,7 +90,7 @@ export function createPiAnthropicCredentialBroker(
 }
 
 export function createOmpOAuthCredentialBroker(
-  provider: "anthropic" | "google-antigravity",
+  provider: OmpOAuthProvider,
   overrides: Partial<Dependencies> = {},
 ): LocalOAuthBroker {
   const deps = dependencies(overrides);
@@ -125,7 +142,15 @@ async function resolvePiAnthropic(
   if (Object.hasOwn(entry, "expires") && expiresAt === undefined) {
     return { status: "invalid" };
   }
-  const credential = { accessToken, expiresAt };
+  const accountIdentity =
+    optionalString(entry.accountId) ?? optionalString(entry.email);
+  const credential = {
+    accessToken,
+    expiresAt,
+    ...(accountIdentity
+      ? { cacheIdentity: `pi:anthropic:${accountIdentity}` }
+      : {}),
+  };
   if (expiresAt !== undefined && expiresAt <= deps.now()) {
     return {
       status: "expired",
@@ -137,12 +162,16 @@ async function resolvePiAnthropic(
 }
 
 async function resolveOmpCredential(
-  provider: "anthropic" | "google-antigravity",
+  provider: OmpOAuthProvider,
   deps: Dependencies,
 ): Promise<LocalOAuthResolution> {
   const home = nonempty(deps.environment.HOME) ?? deps.homeDirectory();
   const path = join(home, ...OMP_DATABASE);
   traceInput(path, tracedStoreIdentity("omp-agent-db", path));
+  traceInput(
+    `${path}-wal`,
+    tracedStoreIdentity("omp-agent-db-wal", `${path}-wal`),
+  );
   try {
     await stat(path);
   } catch (error) {
@@ -151,17 +180,7 @@ async function resolveOmpCredential(
       : { status: "error" };
   }
   try {
-    const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as {
-      DatabaseSync: new (
-        path: string,
-        options: { readOnly: boolean },
-      ) => {
-        prepare(sql: string): {
-          get(...params: string[]): Record<string, unknown> | undefined;
-        };
-        close(): void;
-      };
-    };
+    const DatabaseSync = loadDatabaseSync();
     const database = new DatabaseSync(path, { readOnly: true });
     try {
       const row = database
@@ -173,18 +192,20 @@ async function resolveOmpCredential(
                   json_extract(data, '$.accountId') AS accountId,
                   json_extract(data, '$.orgName') AS organization,
                   json_extract(data, '$.projectId') AS projectId,
+                  identity_key AS identityKey,
+                  updated_at AS updatedAt,
                   CASE WHEN json_type(data, '$.refresh') = 'text'
                     THEN 1 ELSE 0 END AS hasRefresh
              FROM auth_credentials
             WHERE provider = ?
+              AND credential_type = 'oauth'
               AND disabled_cause IS NULL
             ORDER BY id DESC
             LIMIT 1`,
         )
         .get(provider);
       if (!row) return { status: "missing" };
-      if (row.credentialType !== "oauth") return { status: "unsupported" };
-      const accessToken = usableLiteralSecret(row.access);
+      const accessToken = ompAccessToken(provider, row.access);
       if (!accessToken) return { status: "invalid" };
       const expiresAt = timestampMs(row.expires);
       if (
@@ -194,6 +215,11 @@ async function resolveOmpCredential(
       ) {
         return { status: "invalid" };
       }
+      const cacheIdentity = ompCacheIdentity(
+        provider,
+        row.identityKey,
+        row.updatedAt,
+      );
       const credential: StoredOAuthCredential = {
         accessToken,
         expiresAt,
@@ -201,6 +227,7 @@ async function resolveOmpCredential(
         accountId: optionalString(row.accountId),
         organization: optionalString(row.organization),
         projectId: optionalString(row.projectId),
+        ...(cacheIdentity ? { cacheIdentity } : {}),
       };
       if (expiresAt !== undefined && expiresAt <= deps.now()) {
         return {
@@ -220,6 +247,54 @@ async function resolveOmpCredential(
   }
 }
 
+type DatabaseSyncConstructor = new (
+  path: string,
+  options?: { readOnly?: boolean },
+) => {
+  prepare(sql: string): {
+    get(...params: string[]): Record<string, unknown> | undefined;
+  };
+  close(): void;
+};
+
+function loadDatabaseSync(): DatabaseSyncConstructor {
+  const emitWarning = process.emitWarning;
+  process.emitWarning = ((warning: string | Error, ...args: unknown[]) => {
+    const category = typeof args[0] === "string" ? args[0] : undefined;
+    if (
+      category === "ExperimentalWarning" &&
+      String(warning).includes("SQLite is an experimental feature")
+    ) {
+      return;
+    }
+    return Reflect.apply(emitWarning, process, [warning, ...args]);
+  }) as typeof process.emitWarning;
+  try {
+    const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as {
+      DatabaseSync: DatabaseSyncConstructor;
+    };
+    const probe = new DatabaseSync(":memory:");
+    probe.close();
+    return DatabaseSync;
+  } finally {
+    process.emitWarning = emitWarning;
+  }
+}
+
+function ompCacheIdentity(
+  provider: string,
+  identityKey: unknown,
+  updatedAt: unknown,
+): string | undefined {
+  const stableIdentity = optionalString(identityKey);
+  if (stableIdentity) return `omp:${provider}:identity:${stableIdentity}`;
+  const updated =
+    typeof updatedAt === "string" || typeof updatedAt === "number"
+      ? String(updatedAt)
+      : undefined;
+  return updated ? `omp:${provider}:updated:${updated}` : undefined;
+}
+
 function timestampMs(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value < 1_000_000_000_000 ? value * 1000 : value;
@@ -233,6 +308,21 @@ function timestampMs(value: unknown): number | undefined {
     return Number.isNaN(parsed) ? undefined : parsed;
   }
   return undefined;
+}
+function ompAccessToken(
+  provider: OmpOAuthProvider,
+  value: unknown,
+): string | undefined {
+  if (
+    provider === "devin" &&
+    typeof value === "string" &&
+    /^devin-session-token\$[A-Za-z0-9_-]+={0,2}\.[A-Za-z0-9_-]+={0,2}\.[A-Za-z0-9_-]+={0,2}$/.test(
+      value,
+    )
+  ) {
+    return value;
+  }
+  return usableLiteralSecret(value);
 }
 
 function optionalString(value: unknown): string | undefined {

@@ -45,6 +45,7 @@ describe("Kimi CLI credential inspection is read-only", () => {
           sources: [
             { source: "pi:kimi-coding", status: "missing" },
             { source: "kimi-code-cli", status: "missing" },
+            { source: "omp:kimi-code", status: "missing" },
           ],
         },
       ],

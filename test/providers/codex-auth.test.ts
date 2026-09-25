@@ -151,7 +151,7 @@ describe("Codex credential-state reporting", () => {
     });
     await fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
 
-    expect(auth.sources[2]).toEqual({
+    expect(auth.sources[3]).toEqual({
       source: "cli-rpc",
       path: binary,
       status: "available",
@@ -179,7 +179,7 @@ describe("Codex credential-state reporting", () => {
       refreshCredentials: false,
     });
 
-    expect(auth.sources[2]).toEqual({
+    expect(auth.sources[3]).toEqual({
       source: "cli-rpc",
       path: undefined,
       status: "missing",
@@ -203,7 +203,7 @@ describe("Codex credential-state reporting", () => {
       refreshCredentials: false,
     });
 
-    expect(auth.sources[2]).toEqual({
+    expect(auth.sources[3]).toEqual({
       source: "cli-rpc",
       path: binary,
       status: "missing",

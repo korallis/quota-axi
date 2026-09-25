@@ -38,6 +38,10 @@ import {
   type KimiCredentialBroker,
   type KimiCredentialResolution,
 } from "./pi-kimi-credential.js";
+import {
+  createOmpOAuthCredentialBroker,
+  type LocalOAuthBroker,
+} from "./local-oauth-credential.js";
 
 /**
  * Pi brokers a Kimi credential without recording which Kimi deployment issued
@@ -97,6 +101,7 @@ const KIMI_NON_QUOTA_KEYS = new Set(["goods_version", "boosterWallet"]);
 type KimiDependencies = {
   broker: KimiCredentialBroker;
   cliCredentialSource: KimiCodeCliCredentialSource;
+  ompBroker: LocalOAuthBroker;
   fetch: typeof globalThis.fetch;
   readCachedProvider: typeof readCachedProviderFromDisk;
   deleteCachedProvider: typeof deleteCachedProviderFromDisk;
@@ -137,6 +142,7 @@ export function createKimiAdapter(
   const dependencies: KimiDependencies = {
     broker: createPiKimiCredentialBroker(),
     cliCredentialSource: createKimiCodeCliCredentialSource(),
+    ompBroker: createOmpOAuthCredentialBroker("kimi-code"),
     fetch: globalThis.fetch,
     readCachedProvider: readCachedProviderFromDisk,
     deleteCachedProvider: deleteCachedProviderFromDisk,
@@ -199,6 +205,12 @@ export function createKimiAdapter(
                     : cliInspection === "environment_unconfirmed"
                       ? KIMI_CODE_ENVIRONMENT_UNCONFIRMED
                       : undefined;
+      let ompInspection;
+      try {
+        ompInspection = await dependencies.ompBroker.inspect();
+      } catch {
+        ompInspection = { status: "error" as const };
+      }
 
       return {
         provider: "kimi",
@@ -219,6 +231,16 @@ export function createKimiAdapter(
             source: KIMI_CODE_CLI_CREDENTIAL_SOURCE,
             status: cliSourceStatus(cliInspection),
             ...(cliError ? { error: cliError } : {}),
+          },
+          {
+            source: "omp:kimi-code",
+            status:
+              ompInspection.status === "unsupported"
+                ? "invalid"
+                : ompInspection.status,
+            ...(ompInspection.status === "expired"
+              ? { error: "credentials_expired" }
+              : {}),
           },
         ],
       };
@@ -259,6 +281,7 @@ export const kimiAdapter = createKimiAdapter();
 const KIMI_SOURCE_ORDER = [
   PI_KIMI_CREDENTIAL_SOURCE,
   KIMI_CODE_CLI_CREDENTIAL_SOURCE,
+  "omp:kimi-code",
 ] as const;
 
 type KimiFailureRecord = {
@@ -277,28 +300,17 @@ type KimiCandidate =
   | {
       status: "available";
       credential: string;
-      /** The endpoint this credential was issued for; it travels with it. */
       quotaUrl: string;
-      /**
-       * Stored-metadata classification only. A stored-expired credential is
-       * still attempted in its source's declared position, and the request
-       * doubles as the liveness probe that decides the verdict.
-       */
       localState: CandidateLocalState;
-      /**
-       * True when a stored-expired candidate's record carries a refresh
-       * token: an empirically rejected probe then reads as soft expiry with
-       * a rotation path, not as sign-out. Meaningful only for `localState:
-       * "expired"` candidates; a stored-valid credential the server rejected
-       * was revoked, not soft-expired.
-       */
       refreshable?: boolean;
+      cacheContextId?: string;
     }
   | {
       status: "unavailable";
       failure: KimiFailure;
       attemptStatus: "skipped" | "failed";
       credentialPresent: boolean;
+      cacheContextId?: string;
     };
 
 async function acquireKimiQuota(
@@ -340,14 +352,25 @@ async function acquireKimiQuota(
       cacheContextId =
         source === PI_KIMI_CREDENTIAL_SOURCE
           ? PI_KIMI_CACHE_CONTEXT_ID
-          : selection?.contextId;
+          : source === "omp:kimi-code"
+            ? undefined
+            : selection?.contextId;
       const candidate = await resolveKimiCandidate(
         source,
         selection,
         dependencies,
         controller.signal,
       );
+      if (source === "omp:kimi-code") {
+        cacheContextId = candidate.cacheContextId;
+      }
       if (candidate.status === "unavailable") {
+        if (
+          source === "omp:kimi-code" &&
+          candidate.failure.code === "credentials_missing"
+        ) {
+          continue;
+        }
         attempts.push({
           source,
           status: candidate.attemptStatus,
@@ -397,7 +420,10 @@ async function acquireKimiQuota(
             if (outcome.kind === "no_quota") {
               return { kind: "live_no_quota" };
             }
-            report = outcome.result;
+            report =
+              source === "omp:kimi-code"
+                ? { ...outcome.result, source }
+                : outcome.result;
             return { kind: "quota", result: outcome.result };
           } catch (error) {
             const failure = asKimiFailure(error);
@@ -536,6 +562,55 @@ async function resolveKimiCandidate(
       resolution.status === "error" ? "failed" : "skipped",
       resolution.status !== "missing",
     );
+  }
+  if (source === "omp:kimi-code") {
+    let resolution;
+    try {
+      resolution = await waitForDeadline(
+        dependencies.ompBroker.resolve(),
+        signal,
+      );
+    } catch {
+      return unavailableCandidate(
+        new KimiFailure("credential_resolution_failed", {
+          staleEligible: true,
+        }),
+        "failed",
+        true,
+      );
+    }
+    if (
+      (resolution.status === "available" || resolution.status === "expired") &&
+      resolution.credential
+    ) {
+      const cacheContextId = resolution.credential.cacheIdentity
+        ? createHash("sha256")
+            .update(resolution.credential.cacheIdentity)
+            .digest("hex")
+        : undefined;
+      return {
+        status: "available",
+        credential: resolution.credential.accessToken,
+        quotaUrl: KIMI_QUOTA_URL,
+        localState: resolution.status === "expired" ? "expired" : "valid",
+        ...(resolution.status === "expired"
+          ? { refreshable: resolution.refreshable }
+          : {}),
+        ...(cacheContextId ? { cacheContextId } : {}),
+      };
+    }
+    return {
+      ...unavailableCandidate(
+        new KimiFailure(
+          resolution.status === "missing"
+            ? "credentials_missing"
+            : `credentials_${resolution.status}`,
+          { staleEligible: true },
+        ),
+        resolution.status === "error" ? "failed" : "skipped",
+        resolution.status !== "missing",
+      ),
+    };
   }
 
   if (!selection) {

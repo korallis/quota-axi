@@ -1809,6 +1809,7 @@ describe("Kimi credential outcomes and cache policy", () => {
         sources: [
           { source: "pi:kimi-coding", ...expected },
           { source: "kimi-code-cli", status: "missing" },
+          { source: "omp:kimi-code", status: "missing" },
         ],
       });
       expect(JSON.stringify(report)).not.toMatch(

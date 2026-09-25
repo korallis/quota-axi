@@ -1,7 +1,7 @@
 import {
+  chmodSync,
   mkdtempSync,
   mkdirSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createOmpOAuthCredentialBroker,
   createPiAnthropicCredentialBroker,
+  OMP_OAUTH_PROVIDERS,
 } from "../../src/providers/local-oauth-credential.js";
 
 const require = createRequire(import.meta.url);
@@ -79,11 +80,11 @@ describe("additional read-only OAuth credential stores", () => {
     mkdirSync(dirname(databasePath), { recursive: true });
     const database = new DatabaseSync(databasePath);
     database.exec(
-      "CREATE TABLE auth_credentials (id INTEGER PRIMARY KEY, provider TEXT NOT NULL, credential_type TEXT NOT NULL, data TEXT NOT NULL, disabled_cause TEXT)",
+      "CREATE TABLE auth_credentials (id INTEGER PRIMARY KEY, provider TEXT NOT NULL, credential_type TEXT NOT NULL, data TEXT NOT NULL, disabled_cause TEXT, identity_key TEXT, updated_at TEXT)",
     );
     database
       .prepare(
-        "INSERT INTO auth_credentials (provider, credential_type, data) VALUES (?, ?, ?)",
+        "INSERT INTO auth_credentials (provider, credential_type, data, identity_key, updated_at) VALUES (?, ?, ?, ?, ?)",
       )
       .run(
         "google-antigravity",
@@ -95,7 +96,29 @@ describe("additional read-only OAuth credential stores", () => {
           email: "antigravity@example.test",
           projectId: "synthetic-project",
         }),
+        "synthetic-identity",
+        "2026-09-25T00:00:00Z",
       );
+    const insertCredential = database.prepare(
+      "INSERT INTO auth_credentials (provider, credential_type, data, identity_key, updated_at) VALUES (?, 'oauth', ?, ?, ?)",
+    );
+    for (const provider of OMP_OAUTH_PROVIDERS) {
+      if (provider === "google-antigravity") continue;
+      const access =
+        provider === "devin"
+          ? "devin-session-token$eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.signature"
+          : `synthetic-omp-${provider}`;
+      insertCredential.run(
+        provider,
+        JSON.stringify({
+          access,
+          refresh: "synthetic-omp-refresh",
+          expires: Date.now() + 60_000,
+        }),
+        `identity-${provider}`,
+        "2026-09-25T00:00:00Z",
+      );
+    }
     database.close();
     process.env.HOME = home;
 
@@ -112,12 +135,24 @@ describe("additional read-only OAuth credential stores", () => {
         projectId: "synthetic-project",
         accountId: undefined,
         organization: undefined,
+        cacheIdentity: "omp:google-antigravity:identity:synthetic-identity",
       },
     });
     await expect(broker.inspect()).resolves.toEqual({ status: "available" });
     expect(JSON.stringify(await broker.inspect())).not.toContain(
       "synthetic-omp-access",
     );
+    for (const provider of OMP_OAUTH_PROVIDERS) {
+      const resolution = await createOmpOAuthCredentialBroker(provider, {
+        environment: process.env,
+        homeDirectory: () => home,
+      }).resolve();
+      expect(resolution.status).toBe("available");
+      if (resolution.status !== "available") continue;
+      expect(resolution.credential.accessToken).not.toContain(
+        "synthetic-omp-refresh",
+      );
+    }
     const { inputsDigest, withInputTrace } =
       await import("../../src/lib/input-trace.js");
     const traced = await withInputTrace(() => broker.resolve());
@@ -127,20 +162,16 @@ describe("additional read-only OAuth credential stores", () => {
     changedDatabase.close();
     expect(inputsDigest(traced.inputs.paths)).not.toBe(traced.inputs.digest);
 
-    const implementation = readFileSync(
-      new URL("../../src/providers/local-oauth-credential.ts", import.meta.url),
-      "utf8",
-    );
-    expect(implementation).toContain(
-      "new DatabaseSync(path, { readOnly: true })",
-    );
-    expect(implementation).not.toMatch(/json_extract\(data,\s*'\$\.refresh'\)/);
-    expect(implementation).not.toMatch(
-      /writeFile|UPDATE auth_credentials|DELETE FROM auth_credentials/,
-    );
+    chmodSync(databasePath, 0o400);
+    await expect(broker.resolve()).resolves.toMatchObject({
+      status: "available",
+      credential: {
+        cacheIdentity: "omp:google-antigravity:identity:synthetic-identity",
+      },
+    });
   });
 
-  it("changes Claude's cache identity when either additional credential store changes", async () => {
+  it("scopes non-native Claude cache identity to the answering account", async () => {
     const home = temporaryDirectory();
     process.env.HOME = home;
     delete process.env.PI_CODING_AGENT_DIR;
@@ -154,17 +185,10 @@ describe("additional read-only OAuth credential stores", () => {
       JSON.stringify({ anthropic: { type: "oauth", access: "synthetic" } }),
       { mode: 0o600 },
     );
-    const withPiCredential = claudeCredentialContextId();
-    expect(withPiCredential).not.toBe(initial);
-
-    const databasePath = join(home, ".omp", "agent", "agent.db");
-    mkdirSync(dirname(databasePath), { recursive: true });
-    const database = new DatabaseSync(databasePath);
-    database.exec(
-      "CREATE TABLE auth_credentials (id INTEGER PRIMARY KEY, provider TEXT NOT NULL, credential_type TEXT NOT NULL, data TEXT NOT NULL, disabled_cause TEXT)",
+    expect(claudeCredentialContextId()).toBe(initial);
+    expect(claudeCredentialContextId("pi:anthropic:account-a")).not.toBe(
+      claudeCredentialContextId("pi:anthropic:account-b"),
     );
-    database.close();
-    expect(claudeCredentialContextId()).not.toBe(withPiCredential);
   });
 
   it("reports missing provider entries without treating another provider as a match", async () => {

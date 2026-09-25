@@ -1,3 +1,4 @@
+import { gunzipSync } from "node:zlib";
 import { TextDecoder } from "node:util";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -14,6 +15,7 @@ import type {
   AuthSourceReport,
   ProviderAdapter,
   ProviderOptions,
+  ProviderAuthStatus,
   ProviderQuota,
   ProviderStatus,
   QuotaWindow,
@@ -28,6 +30,10 @@ import {
   publishDevinReadingContextId,
 } from "./devin-cache-context.js";
 import { traceInput } from "../lib/input-trace.js";
+import {
+  createOmpOAuthCredentialBroker,
+  type LocalOAuthBroker,
+} from "./local-oauth-credential.js";
 
 export const DEVIN_API_ORIGIN = "https://server.codeium.com";
 export const DEVIN_USER_STATUS_PATH =
@@ -35,6 +41,7 @@ export const DEVIN_USER_STATUS_PATH =
 
 export const DEVIN_ENV_SOURCE = "env:WINDSURF_API_KEY";
 export const DEVIN_FILE_SOURCE = "file:credentials.toml";
+export const OMP_DEVIN_SOURCE = "omp:devin";
 
 /**
  * Ownership-stability order. The vendor CLI resolves `WINDSURF_API_KEY` before
@@ -46,10 +53,27 @@ export const DEVIN_SOURCE_ORDER = [
   DEVIN_FILE_SOURCE,
 ] as const;
 
-export type DevinSourceName = (typeof DEVIN_SOURCE_ORDER)[number];
+export type DevinSourceName =
+  | (typeof DEVIN_SOURCE_ORDER)[number]
+  | typeof OMP_DEVIN_SOURCE;
 
 const LABEL = "Devin";
 const OPERATION_DEADLINE_MS = 15_000;
+const OMP_DEVIN_CLI_VERSION = "3000.6.2";
+const OMP_DEVIN_USAGE_METADATA = {
+  ideName: "devin-cli",
+  ideType: "chisel",
+  ideVersion: OMP_DEVIN_CLI_VERSION,
+  extensionName: "chisel",
+  extensionVersion: OMP_DEVIN_CLI_VERSION,
+  locale: "en",
+  os:
+    process.platform === "darwin"
+      ? "darwin"
+      : process.platform === "win32"
+        ? "windows"
+        : "linux",
+} as const;
 const RESPONSE_LIMIT_BYTES = 1_048_576;
 const CREDENTIALS_LIMIT_BYTES = 65_536;
 const DAY_SECONDS = 86_400;
@@ -109,6 +133,7 @@ export type NormalizedDevinPayload = {
 
 type DevinDependencies = {
   sources: readonly DevinCredentialSource[];
+  ompBroker: LocalOAuthBroker;
   fetch: typeof globalThis.fetch;
   readCachedProvider: typeof readCachedProviderFromDisk;
   deleteCachedProvider: (provider: "devin") => void;
@@ -121,7 +146,8 @@ type DevinFailureOptions = {
   staleEligible?: boolean;
   definitiveAuth?: boolean;
   authUsable?: boolean;
-  retryAfter?: string;
+  readonly authStatus?: ProviderAuthStatus;
+  readonly retryAfter?: string;
 };
 
 type ResponseBodyLifetime = {
@@ -248,6 +274,7 @@ export function createDevinAdapter(
 ): ProviderAdapter {
   const dependencies: DevinDependencies = {
     sources: [createDevinEnvSource(), createDevinFileSource()],
+    ompBroker: createOmpOAuthCredentialBroker("devin"),
     fetch: providerFetch,
     readCachedProvider: readCachedProviderFromDisk,
     deleteCachedProvider: () => deleteCachedProviderFromDisk("devin"),
@@ -272,37 +299,47 @@ export function createDevinAdapter(
       inFlight = acquisition;
       return acquisition;
     },
-    inspectAuth(_options: ProviderOptions): Promise<AuthProviderReport> {
-      return Promise.resolve(inspectAuth(dependencies));
+    async inspectAuth(_options: ProviderOptions): Promise<AuthProviderReport> {
+      return inspectAuth(dependencies);
     },
   };
 }
 
 export const devinAdapter = createDevinAdapter();
 
-function inspectAuth(dependencies: DevinDependencies): AuthProviderReport {
+async function inspectAuth(
+  dependencies: DevinDependencies,
+): Promise<AuthProviderReport> {
+  const omp = await dependencies.ompBroker.inspect();
   return {
     provider: "devin",
-    sources: dependencies.sources.map((source) => {
-      try {
-        const inspection = source.inspect();
-        return {
-          source: source.name,
-          ...(inspection.path ? { path: inspection.path } : {}),
-          status: inspection.status,
-          ...(inspection.error ? { error: inspection.error } : {}),
-          ...(inspection.credentialPresent
-            ? { credentialPresent: true as const }
-            : {}),
-        };
-      } catch {
-        return {
-          source: source.name,
-          status: "error" as const,
-          error: "credential_resolution_failed",
-        };
-      }
-    }),
+    sources: [
+      ...dependencies.sources.map((source) => {
+        try {
+          const inspection = source.inspect();
+          return {
+            source: source.name,
+            ...(inspection.path ? { path: inspection.path } : {}),
+            status: inspection.status,
+            ...(inspection.error ? { error: inspection.error } : {}),
+            ...(inspection.credentialPresent
+              ? { credentialPresent: true as const }
+              : {}),
+          };
+        } catch {
+          return {
+            source: source.name,
+            status: "error" as const,
+            error: "credential_resolution_failed",
+          };
+        }
+      }),
+      {
+        source: OMP_DEVIN_SOURCE,
+        status: omp.status === "unsupported" ? "invalid" : omp.status,
+        ...(omp.status === "expired" ? { error: "credentials_expired" } : {}),
+      },
+    ],
   };
 }
 
@@ -460,6 +497,79 @@ async function acquireDevinQuota(
       });
     }
 
+    let ompResolution;
+    try {
+      ompResolution = await dependencies.ompBroker.resolve();
+    } catch {
+      ompResolution = { status: "error" as const };
+    }
+    if (
+      ompResolution.status === "available" ||
+      ompResolution.status === "expired"
+    ) {
+      const source = OMP_DEVIN_SOURCE;
+      const credential = {
+        token: ompResolution.credential.accessToken,
+        origin: DEVIN_API_ORIGIN,
+      };
+      const contextId = devinCacheContextId(
+        source,
+        credential.origin,
+        credential.token,
+      );
+      attempts.push({ source, status: "failed" });
+      try {
+        const payload = await requestUserStatus(
+          credential,
+          controller.signal,
+          dependencies,
+          "omp-protobuf",
+        );
+        const normalized = normalizeDevinPayload(payload, dependencies.now());
+        attempts[attempts.length - 1] = { source, status: "success" };
+        publishDevinReadingContextId(contextId);
+        return freshReport(normalized, attempts, dependencies, source);
+      } catch (error) {
+        const failure = asDevinFailure(error);
+        attempts[attempts.length - 1] = {
+          source,
+          status: "failed",
+          error: failure.code,
+          credentialPresent: true,
+        };
+        if (
+          failure.definitiveAuth &&
+          ompResolution.status === "expired" &&
+          ompResolution.refreshable
+        ) {
+          return failureReport(
+            new DevinFailure("credentials_expired", {
+              status: "unavailable",
+              staleEligible: true,
+              authStatus: "expired_refreshable",
+            }),
+            contextId,
+            attempts,
+            dependencies,
+          );
+        }
+        if (!failure.definitiveAuth) {
+          return failureReport(failure, contextId, attempts, dependencies);
+        }
+        rejectedFailure = failure;
+        rejectedContextId = contextId;
+      }
+    } else {
+      attempts.push({
+        source: OMP_DEVIN_SOURCE,
+        status: ompResolution.status === "missing" ? "skipped" : "failed",
+        error: `credentials_${ompResolution.status}`,
+        ...(ompResolution.status === "missing"
+          ? {}
+          : { credentialPresent: true }),
+      });
+    }
+
     if (rejectedFailure) {
       return failureReport(
         rejectedFailure,
@@ -504,11 +614,12 @@ function freshReport(
   normalized: NormalizedDevinPayload,
   attempts: SourceAttempt[],
   dependencies: DevinDependencies,
+  source: ProviderQuota["source"] = "api",
 ): ProviderQuota {
   return {
     provider: "devin",
     label: LABEL,
-    source: "api",
+    source,
     ...(normalized.plan ? { plan: normalized.plan } : {}),
     ...(normalized.account ? { account: normalized.account } : {}),
     windows: normalized.windows,
@@ -533,7 +644,11 @@ function failureReport(
   attempts: SourceAttempt[],
   dependencies: DevinDependencies,
 ): ProviderQuota {
-  if (failure.definitiveAuth && cacheContextId) {
+  if (
+    failure.definitiveAuth &&
+    failure.authStatus !== "expired_refreshable" &&
+    cacheContextId
+  ) {
     retireMatchingCache(cacheContextId, dependencies);
   }
 
@@ -555,7 +670,9 @@ function failureReport(
           label: LABEL,
           state: {
             ...stale.state,
-            authStatus: failure.authUsable ? "usable" : stale.state.authStatus,
+            authStatus:
+              failure.authStatus ??
+              (failure.authUsable ? "usable" : stale.state.authStatus),
             ...(failure.retryAfter ? { retryAfter: failure.retryAfter } : {}),
           },
         };
@@ -574,8 +691,13 @@ function failureReport(
       status: failure.status,
       stale: false,
       error: failure.code,
-      ...(failure.authUsable ? { authStatus: "usable" as const } : {}),
-      ...(failure.definitiveAuth ? { authStatus: "unusable" as const } : {}),
+      ...(failure.authStatus
+        ? { authStatus: failure.authStatus }
+        : failure.authUsable
+          ? { authStatus: "usable" as const }
+          : failure.definitiveAuth
+            ? { authStatus: "unusable" as const }
+            : {}),
       ...(failure.status === "auth_required"
         ? { remedyCommand: SIGN_IN_REMEDY }
         : {}),
@@ -623,27 +745,31 @@ async function requestUserStatus(
   credential: DevinResolvedCredential,
   signal: AbortSignal,
   dependencies: DevinDependencies,
+  protocol: "connect-json" | "omp-protobuf" = "connect-json",
 ): Promise<unknown> {
   const url = new URL(DEVIN_USER_STATUS_PATH, credential.origin).href;
-  const body = JSON.stringify({
-    metadata: {
-      apiKey: credential.token,
-      ideName: "quota-axi",
-      ideVersion: VERSION,
-      extensionName: "quota-axi",
-      extensionVersion: VERSION,
-    },
-  });
+  const isOmp = protocol === "omp-protobuf";
+  const body: string | ArrayBuffer = isOmp
+    ? encodeOmpDevinRequest(credential.token)
+    : JSON.stringify({
+        metadata: {
+          apiKey: credential.token,
+          ideName: "quota-axi",
+          ideVersion: VERSION,
+          extensionName: "quota-axi",
+          extensionVersion: VERSION,
+        },
+      });
   let response: Response;
   try {
     response = await waitForDeadline(
       dependencies.fetch(url, {
         method: "POST",
         headers: {
-          accept: "application/json",
-          "content-type": "application/json",
+          accept: isOmp ? "*/*" : "application/json",
+          "content-type": isOmp ? "application/proto" : "application/json",
           "connect-protocol-version": "1",
-          "user-agent": USER_AGENT,
+          ...(!isOmp ? { "user-agent": USER_AGENT } : {}),
         },
         body,
         credentials: "omit",
@@ -674,6 +800,7 @@ async function requestUserStatus(
       throw new DevinFailure("network_unavailable", { staleEligible: true });
     }
 
+    if (isOmp) return decodeOmpDevinResponse(bytes);
     let text: string;
     try {
       text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -690,6 +817,342 @@ async function requestUserStatus(
   } finally {
     void lifetime.cancel();
   }
+}
+
+type DevinProtoField = {
+  number: number;
+  wire: number;
+  value: bigint | Uint8Array;
+};
+
+function encodeOmpDevinRequest(token: string): ArrayBuffer {
+  const apiKey = token.startsWith("devin-session-token$")
+    ? token
+    : `devin-session-token$${token}`;
+  const metadata = [
+    protoStringField(1, OMP_DEVIN_USAGE_METADATA.ideName),
+    protoStringField(7, OMP_DEVIN_USAGE_METADATA.ideVersion),
+    protoStringField(28, OMP_DEVIN_USAGE_METADATA.ideType),
+    protoStringField(12, OMP_DEVIN_USAGE_METADATA.extensionName),
+    protoStringField(2, OMP_DEVIN_USAGE_METADATA.extensionVersion),
+    protoStringField(3, apiKey),
+    protoStringField(4, OMP_DEVIN_USAGE_METADATA.locale),
+    protoStringField(5, OMP_DEVIN_USAGE_METADATA.os),
+  ];
+  return protoBytesField(1, joinBytes(metadata)).buffer;
+}
+
+function protoStringField(
+  number: number,
+  value: string,
+): Uint8Array<ArrayBuffer> {
+  return protoBytesField(number, new TextEncoder().encode(value));
+}
+
+function protoBytesField(
+  number: number,
+  value: Uint8Array<ArrayBuffer>,
+): Uint8Array<ArrayBuffer> {
+  return joinBytes([
+    protoVarint(BigInt((number << 3) | 2)),
+    protoVarint(BigInt(value.length)),
+    value,
+  ]);
+}
+
+function protoVarint(value: bigint): Uint8Array<ArrayBuffer> {
+  const bytes: number[] = [];
+  let remaining = value;
+  while (remaining > 0x7fn) {
+    bytes.push(Number((remaining & 0x7fn) | 0x80n));
+    remaining >>= 7n;
+  }
+  bytes.push(Number(remaining));
+  const result = new Uint8Array(bytes.length);
+  result.set(bytes);
+  return result;
+}
+
+function joinBytes(
+  parts: readonly Uint8Array<ArrayBuffer>[],
+): Uint8Array<ArrayBuffer> {
+  const length = parts.reduce((total, part) => total + part.length, 0);
+  const result = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.length;
+  }
+  return result;
+}
+
+function decodeOmpDevinResponse(bytes: Uint8Array): unknown {
+  try {
+    return convertOmpDevinResponse(bytes);
+  } catch {
+    try {
+      const unzipped = gunzipSync(bytes, {
+        maxOutputLength: RESPONSE_LIMIT_BYTES,
+      });
+      const decoded = new Uint8Array(unzipped.length);
+      decoded.set(unzipped);
+      return convertOmpDevinResponse(decoded);
+    } catch {
+      throw new DevinFailure("response_invalid_protobuf", {
+        staleEligible: true,
+      });
+    }
+  }
+}
+
+function convertOmpDevinResponse(bytes: Uint8Array): unknown {
+  const response = scanDevinProto(bytes);
+  const userStatusBytes = protoMessage(response, 1);
+  if (!userStatusBytes) {
+    throw new DevinFailure("response_invalid_protobuf", {
+      staleEligible: true,
+    });
+  }
+  const userStatus = scanDevinProto(userStatusBytes);
+  const planStatusBytes = protoMessage(userStatus, 13);
+  const planStatus = planStatusBytes
+    ? scanDevinProto(planStatusBytes)
+    : undefined;
+  const planInfoBytes =
+    protoMessage(response, 2) ??
+    (planStatus ? protoMessage(planStatus, 1) : undefined);
+  const planInfo = planInfoBytes ? scanDevinProto(planInfoBytes) : undefined;
+  const email = protoString(userStatus, 7);
+  const accountId = protoString(userStatus, 36);
+  const tier = protoInteger(userStatus, 10);
+  const billingStrategy = planInfo ? protoInteger(planInfo, 35) : undefined;
+  const planName = planInfo ? protoString(planInfo, 2) : undefined;
+  const teamId = protoString(userStatus, 5);
+  const devinInfoBytes = planInfo ? protoMessage(planInfo, 33) : undefined;
+  const devinInfo = devinInfoBytes ? scanDevinProto(devinInfoBytes) : undefined;
+  const organizationId =
+    (devinInfo ? protoString(devinInfo, 4) : undefined) || teamId;
+  const organization = devinInfo ? protoString(devinInfo, 8) : undefined;
+  const mappedPlanStatus = planStatus
+    ? mapOmpDevinPlanStatus(planStatus)
+    : undefined;
+  if (mappedPlanStatus) {
+    for (const [percentKey, resetKey] of [
+      ["dailyQuotaRemainingPercent", "dailyQuotaResetAtUnix"],
+      ["weeklyQuotaRemainingPercent", "weeklyQuotaResetAtUnix"],
+    ] as const) {
+      const hasPositiveReset =
+        (integerValue(mappedPlanStatus[resetKey]) ?? 0) > 0;
+      if (
+        (billingStrategy === 2n || hasPositiveReset) &&
+        !Object.hasOwn(mappedPlanStatus, percentKey)
+      ) {
+        mappedPlanStatus[percentKey] = "0";
+      }
+    }
+  }
+  return {
+    userStatus: {
+      ...(email ? { email } : {}),
+      ...(accountId ? { userId: accountId } : {}),
+      ...(organizationId ? { organizationId } : {}),
+      ...(organization ? { organization } : {}),
+      ...(tier === undefined ? {} : { teamsTier: devinTierName(tier) }),
+      ...(mappedPlanStatus ? { planStatus: mappedPlanStatus } : {}),
+    },
+    ...(planInfo
+      ? {
+          planInfo: {
+            ...(planName ? { planName } : {}),
+            billingStrategy: devinBillingStrategy(billingStrategy),
+            hideDailyQuota: protoInteger(planInfo, 36) === 1n,
+            hideWeeklyQuota: protoInteger(planInfo, 37) === 1n,
+            ...protoCreditLimits(planInfo),
+          },
+        }
+      : {}),
+  };
+}
+
+function mapOmpDevinPlanStatus(
+  fields: DevinProtoField[],
+): Record<string, string> {
+  const mapped: Record<string, string> = {};
+  for (const [number, key] of [
+    [14, "dailyQuotaRemainingPercent"],
+    [15, "weeklyQuotaRemainingPercent"],
+    [17, "dailyQuotaResetAtUnix"],
+    [18, "weeklyQuotaResetAtUnix"],
+    [16, "overageBalanceMicros"],
+    [8, "availablePromptCredits"],
+    [9, "availableFlowCredits"],
+    [4, "availableFlexCredits"],
+    [6, "usedPromptCredits"],
+    [5, "usedFlowCredits"],
+    [7, "usedFlexCredits"],
+  ] as const) {
+    const value = protoInteger(fields, number);
+    if (value !== undefined) mapped[key] = value.toString();
+  }
+  const planStart = protoTimestampString(fields, 2);
+  const planEnd = protoTimestampString(fields, 3);
+  if (planStart) mapped.planStart = planStart;
+  if (planEnd) mapped.planEnd = planEnd;
+  return mapped;
+}
+function protoCreditLimits(fields: DevinProtoField[]): Record<string, string> {
+  const limits: Record<string, string> = {};
+  for (const [number, key] of [
+    [12, "monthlyPromptCredits"],
+    [13, "monthlyFlowCredits"],
+    [14, "monthlyFlexCreditPurchaseAmount"],
+  ] as const) {
+    const value = protoInteger(fields, number);
+    if (value !== undefined) limits[key] = value.toString();
+  }
+  return limits;
+}
+
+function protoTimestampString(
+  fields: DevinProtoField[],
+  number: number,
+): string | undefined {
+  const bytes = protoMessage(fields, number);
+  if (!bytes) return undefined;
+  const timestamp = scanDevinProto(bytes);
+  const seconds = protoInteger(timestamp, 1);
+  const nanos = protoInteger(timestamp, 2) ?? 0n;
+  if (seconds === undefined || nanos < 0n || nanos >= 1_000_000_000n) {
+    return undefined;
+  }
+  const milliseconds = Number(seconds) * 1000 + Number(nanos) / 1_000_000;
+  if (!Number.isFinite(milliseconds)) return undefined;
+  try {
+    return new Date(milliseconds).toISOString();
+  } catch {
+    return undefined;
+  }
+}
+
+function devinBillingStrategy(value: bigint | undefined): string {
+  if (value === 2n) return QUOTA_BILLING;
+  if (value === 1n) return "BILLING_STRATEGY_CREDITS";
+  if (value === 3n) return "BILLING_STRATEGY_ACU";
+  return "BILLING_STRATEGY_UNSPECIFIED";
+}
+
+function devinTierName(value: bigint): string {
+  const names: Record<string, string> = {
+    "1": "TEAMS",
+    "2": "PRO",
+    "3": "ENTERPRISE_SAAS",
+    "4": "HYBRID",
+    "5": "ENTERPRISE_SELF_HOSTED",
+    "6": "WAITLIST_PRO",
+    "7": "TEAMS_ULTIMATE",
+    "8": "PRO_ULTIMATE",
+    "9": "TRIAL",
+    "10": "ENTERPRISE_SELF_SERVE",
+    "11": "ENTERPRISE_SAAS_POOLED",
+    "12": "DEVIN_ENTERPRISE",
+    "14": "DEVIN_TEAMS",
+    "15": "DEVIN_TEAMS_V2",
+    "16": "DEVIN_PRO",
+    "17": "DEVIN_MAX",
+    "18": "MAX",
+    "19": "DEVIN_FREE",
+    "20": "DEVIN_TRIAL",
+  };
+  return names[value.toString()] ?? "UNSPECIFIED";
+}
+
+function scanDevinProto(bytes: Uint8Array): DevinProtoField[] {
+  const fields: DevinProtoField[] = [];
+  let offset = 0;
+  while (offset < bytes.length) {
+    const key = readDevinVarint(bytes, offset);
+    offset = key.offset;
+    const number = Number(key.value >> 3n);
+    const wire = Number(key.value & 7n);
+    if (number < 1 || number > 0x1fffffff) throw new Error("invalid field");
+    if (wire === 0) {
+      const value = readDevinVarint(bytes, offset);
+      fields.push({ number, wire, value: value.value });
+      offset = value.offset;
+      continue;
+    }
+    if (wire === 1 || wire === 5) {
+      const length = wire === 1 ? 8 : 4;
+      if (offset + length > bytes.length) throw new Error("truncated field");
+      fields.push({
+        number,
+        wire,
+        value: bytes.subarray(offset, offset + length),
+      });
+      offset += length;
+      continue;
+    }
+    if (wire === 2) {
+      const length = readDevinVarint(bytes, offset);
+      offset = length.offset;
+      if (length.value > BigInt(RESPONSE_LIMIT_BYTES))
+        throw new Error("field too large");
+      const end = offset + Number(length.value);
+      if (!Number.isSafeInteger(end) || end > bytes.length)
+        throw new Error("truncated field");
+      fields.push({ number, wire, value: bytes.subarray(offset, end) });
+      offset = end;
+      continue;
+    }
+    throw new Error("unsupported wire type");
+  }
+  return fields;
+}
+
+function readDevinVarint(
+  bytes: Uint8Array,
+  start: number,
+): { value: bigint; offset: number } {
+  let value = 0n;
+  let offset = start;
+  for (let index = 0; index < 10 && offset < bytes.length; index += 1) {
+    const byte = bytes[offset];
+    offset += 1;
+    if (index === 9 && byte > 1) throw new Error("invalid varint");
+    value |= BigInt(byte & 0x7f) << BigInt(index * 7);
+    if ((byte & 0x80) === 0) return { value, offset };
+  }
+  throw new Error("truncated varint");
+}
+
+function protoMessage(
+  fields: DevinProtoField[],
+  number: number,
+): Uint8Array | undefined {
+  const field = fields.find(
+    (candidate) => candidate.number === number && candidate.wire === 2,
+  );
+  return field?.value instanceof Uint8Array ? field.value : undefined;
+}
+
+function protoString(
+  fields: DevinProtoField[],
+  number: number,
+): string | undefined {
+  const value = protoMessage(fields, number);
+  return value
+    ? new TextDecoder("utf-8", { fatal: true }).decode(value)
+    : undefined;
+}
+
+function protoInteger(
+  fields: DevinProtoField[],
+  number: number,
+): bigint | undefined {
+  const field = fields.find(
+    (candidate) => candidate.number === number && candidate.wire === 0,
+  );
+  return typeof field?.value === "bigint" ? field.value : undefined;
 }
 
 function rejectHttpFailure(response: Response, receivedAt: number): void {
@@ -736,19 +1199,12 @@ function rejectHttpFailure(response: Response, receivedAt: number): void {
 /**
  * Normalize a Connect-JSON `GetUserStatus` body.
  *
- * Quota windows are published only for `BILLING_STRATEGY_QUOTA`. The daily
- * window reuses the existing `session` kind (id `daily`, label `day`) so the
- * published window-kind enum stays unchanged; `windowSeconds` carries the
- * vendor's 86,400s day. `hideDailyQuota: true` omits that window, because Max
- * has no daily cap; a missing flag leaves the daily cap unresolved rather than
- * allowing a potentially unenforced figure to bind included quota.
- * Every other expected window whose figure is missing or belongs to a finished
- * cycle is named as untrusted, and a body carrying quota fields without a
- * billing strategy, or with no usable expected window, is `schema_incomplete`.
- *
- * Remaining percents are the vendor's own `*_quota_remaining_percent`. Proto3
- * JSON omits zero-valued scalars, so a missing percent whose reset is present
- * is 0 remaining.
+ * The OMP request follows its Devin CLI usage contract: an explicit positive
+ * reset or quota billing establishes a quota window unless the plan hides it.
+ * The daily window reuses the existing `session` kind; an explicit quota-plan
+ * proto3 zero remains zero, while malformed or elapsed readings stay untrusted.
+ * Prompt, flow, and flex credits remain separate vendor-reported buckets and
+ * never become binding windows.
  */
 export function normalizeDevinPayload(
   payload: unknown,
@@ -775,13 +1231,15 @@ export function normalizeDevinPayload(
   ) {
     throw new DevinFailure("schema_invalid", { staleEligible: true });
   }
-  if (
-    planInfo &&
-    Object.hasOwn(planInfo, "hideDailyQuota") &&
-    planInfo.hideDailyQuota !== undefined &&
-    typeof planInfo.hideDailyQuota !== "boolean"
-  ) {
-    throw new DevinFailure("schema_invalid", { staleEligible: true });
+  for (const key of ["hideDailyQuota", "hideWeeklyQuota"] as const) {
+    if (
+      planInfo &&
+      Object.hasOwn(planInfo, key) &&
+      planInfo[key] !== undefined &&
+      typeof planInfo[key] !== "boolean"
+    ) {
+      throw new DevinFailure("schema_invalid", { staleEligible: true });
+    }
   }
   const planStatus = objectValue(userStatus.planStatus);
   if (
@@ -795,62 +1253,97 @@ export function normalizeDevinPayload(
   const plan = nonemptyString(userStatus.teamsTier);
   const email = nonemptyString(userStatus.email);
   const accountId = nonemptyString(userStatus.userId);
+  const organization = nonemptyString(userStatus.organization);
+  const organizationId = nonemptyString(userStatus.organizationId);
   const account =
-    email || accountId
+    email || accountId || organization || organizationId
       ? {
           ...(email ? { email } : {}),
           ...(accountId ? { accountId } : {}),
+          ...(organization ? { organization } : {}),
+          ...(organizationId ? { organizationId } : {}),
         }
       : undefined;
-  const credits = planStatus ? creditsFromMicros(planStatus) : undefined;
+  const credits = planStatus
+    ? creditsFromMicros(planStatus, planInfo)
+    : undefined;
   const untrustedWindowIds: string[] = [];
   const windows: QuotaWindow[] = [];
   const quotaFields =
     planStatus !== undefined &&
     QUOTA_FIELDS.some((key) => Object.hasOwn(planStatus, key));
-  if (quotaFields && planInfo?.billingStrategy === undefined) {
+  const quotaPlan = planInfo?.billingStrategy === QUOTA_BILLING;
+  const hasPositiveReset =
+    planStatus !== undefined &&
+    ["dailyQuotaResetAtUnix", "weeklyQuotaResetAtUnix"].some(
+      (key) => (integerValue(planStatus[key]) ?? 0) > 0,
+    );
+  if (
+    quotaFields &&
+    planInfo?.billingStrategy === undefined &&
+    !hasPositiveReset
+  ) {
     throw new DevinFailure("schema_incomplete", { staleEligible: true });
   }
-  if (quotaFields && planInfo?.billingStrategy === QUOTA_BILLING) {
-    const expected: [string, QuotaWindow | undefined][] = [
-      [
-        "weekly",
-        normalizeQuotaWindow(
-          planStatus,
-          "weekly",
-          "week",
-          "weekly",
-          WEEK_SECONDS,
-          "weeklyQuotaRemainingPercent",
-          "weeklyQuotaResetAtUnix",
-          now,
-        ),
-      ],
+
+  if (planStatus) {
+    const candidates = [
+      {
+        id: "weekly",
+        label: "week",
+        kind: "weekly" as const,
+        duration: WEEK_SECONDS,
+        percent: "weeklyQuotaRemainingPercent",
+        reset: "weeklyQuotaResetAtUnix",
+        hidden: planInfo?.hideWeeklyQuota === true,
+      },
+      {
+        id: "daily",
+        label: "day",
+        kind: "session" as const,
+        duration: DAY_SECONDS,
+        percent: "dailyQuotaRemainingPercent",
+        reset: "dailyQuotaResetAtUnix",
+        hidden: planInfo?.hideDailyQuota === true,
+      },
     ];
-    if (planInfo.hideDailyQuota === false) {
-      expected.push([
-        "daily",
-        normalizeQuotaWindow(
-          planStatus,
-          "daily",
-          "day",
-          "session",
-          DAY_SECONDS,
-          "dailyQuotaRemainingPercent",
-          "dailyQuotaResetAtUnix",
-          now,
-        ),
-      ]);
-    } else if (planInfo.hideDailyQuota !== true) {
-      // A missing flag cannot distinguish an enforced daily cap from a Max
-      // plan's vestigial, unenforced daily figure. Neither value may bind.
-      untrustedWindowIds.push("daily");
-    }
-    for (const [id, window] of expected) {
+    let expectedCount = 0;
+    for (const candidate of candidates) {
+      const hasPositiveReset =
+        (integerValue(planStatus[candidate.reset]) ?? 0) > 0;
+      if (
+        candidate.hidden ||
+        (!quotaPlan && !hasPositiveReset) ||
+        (!hasPositiveReset && !quotaFields)
+      ) {
+        continue;
+      }
+      if (
+        candidate.id === "daily" &&
+        quotaPlan &&
+        planInfo?.hideDailyQuota === undefined &&
+        !hasPositiveReset
+      ) {
+        untrustedWindowIds.push("daily");
+        continue;
+      }
+      expectedCount += 1;
+      const window = normalizeQuotaWindow(
+        planStatus,
+        candidate.id,
+        candidate.label,
+        candidate.kind,
+        candidate.duration,
+        candidate.percent,
+        candidate.reset,
+        now,
+      );
       if (window) windows.push(window);
-      if (window?.percentRemaining === undefined) untrustedWindowIds.push(id);
+      if (window?.percentRemaining === undefined) {
+        untrustedWindowIds.push(candidate.id);
+      }
     }
-    if (windows.length === 0) {
+    if (expectedCount > 0 && windows.length === 0) {
       throw new DevinFailure("schema_incomplete", { staleEligible: true });
     }
   }
@@ -928,11 +1421,59 @@ function windowWithoutPercent(
 
 function creditsFromMicros(
   planStatus: Record<string, unknown>,
+  planInfo?: Record<string, unknown>,
 ): NormalizedDevinPayload["credits"] | undefined {
-  if (!Object.hasOwn(planStatus, "overageBalanceMicros")) return undefined;
-  const micros = integerValue(planStatus.overageBalanceMicros);
-  if (micros === undefined || micros < 0) return undefined;
-  return { remaining: micros / 1_000_000, unit: "usd" };
+  const credits: NonNullable<NormalizedDevinPayload["credits"]> = {};
+  if (Object.hasOwn(planStatus, "overageBalanceMicros")) {
+    const micros = integerValue(planStatus.overageBalanceMicros);
+    if (micros !== undefined && micros >= 0) {
+      credits.remaining = micros / 1_000_000;
+      credits.unit = "usd";
+    }
+  }
+
+  if (planInfo) {
+    const buckets: NonNullable<
+      NonNullable<NormalizedDevinPayload["credits"]>["buckets"]
+    > = [];
+    const startsAt = nonemptyString(planStatus.planStart);
+    const resetsAt = nonemptyString(planStatus.planEnd);
+    for (const [id, usedKey, availableKey, limitKey] of [
+      [
+        "prompt",
+        "usedPromptCredits",
+        "availablePromptCredits",
+        "monthlyPromptCredits",
+      ],
+      ["flow", "usedFlowCredits", "availableFlowCredits", "monthlyFlowCredits"],
+      [
+        "flex",
+        "usedFlexCredits",
+        "availableFlexCredits",
+        "monthlyFlexCreditPurchaseAmount",
+      ],
+    ] as const) {
+      const usedValue = integerValue(planStatus[usedKey]);
+      const availableValue = integerValue(planStatus[availableKey]);
+      const limitValue = integerValue(planInfo[limitKey]);
+      const used = Math.max(0, usedValue ?? 0);
+      const available = Math.max(0, availableValue ?? 0);
+      const limit =
+        limitValue !== undefined && limitValue > 0 ? limitValue : undefined;
+      if (used === 0 && available === 0 && limit === undefined) continue;
+      buckets.push({
+        id,
+        used,
+        available,
+        unit: "credits",
+        ...(limit !== undefined ? { limit } : {}),
+        ...(startsAt ? { startsAt } : {}),
+        ...(resetsAt ? { resetsAt } : {}),
+      });
+    }
+    if (buckets.length > 0) credits.buckets = buckets;
+  }
+  return Object.keys(credits).length > 0 ? credits : undefined;
 }
 
 function resolutionFromFields(fields: CredentialFields): DevinLocalResolution {
@@ -1311,6 +1852,7 @@ class DevinFailure extends Error {
   readonly staleEligible: boolean;
   readonly definitiveAuth: boolean;
   readonly authUsable: boolean;
+  readonly authStatus?: ProviderAuthStatus;
   readonly retryAfter?: string;
 
   constructor(code: string, options: DevinFailureOptions = {}) {
@@ -1321,6 +1863,7 @@ class DevinFailure extends Error {
     this.staleEligible = options.staleEligible === true;
     this.definitiveAuth = options.definitiveAuth === true;
     this.authUsable = options.authUsable === true;
+    this.authStatus = options.authStatus;
     this.retryAfter = options.retryAfter;
   }
 }

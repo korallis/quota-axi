@@ -8,6 +8,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { LocalOAuthBroker } from "../../src/providers/local-oauth-credential.js";
 import { withQuotaSemantics } from "../../src/interpretation.js";
 import { devinCacheContextId } from "../../src/providers/devin-cache-context.js";
 import {
@@ -124,6 +125,137 @@ describe("Devin request transport", () => {
     expect(body.metadata.ideVersion).toMatch(/^\d+\.\d+\.\d+/);
     expect(new URL(DEVIN_API_ORIGIN).hostname).toBe("server.codeium.com");
   });
+
+  it.each([
+    {
+      form: "unprefixed",
+      accessToken: SESSION_TOKEN.slice("devin-session-token$".length),
+    },
+    { form: "prefixed", accessToken: SESSION_TOKEN },
+  ])(
+    "uses OMP's Devin CLI protobuf contract ($form)",
+    async ({ accessToken }) => {
+      const broker: LocalOAuthBroker = {
+        resolve: async () => ({
+          status: "available",
+          credential: {
+            accessToken,
+            email: "devin@example.test",
+            accountId: "devin-account-fixture",
+          },
+        }),
+      };
+      const response = ompDevinResponse({
+        email: "devin@example.test",
+        accountId: "devin-account-fixture",
+        organizationId: "devin-org-fixture",
+        organization: "Example Organization",
+        weeklyRemaining: 65,
+        weeklyReset: Math.floor(NOW / 1000) + 3600,
+        tier: 18,
+        planStart: Math.floor(Date.parse("2026-09-01T00:00:00.000Z") / 1000),
+        planEnd: Math.floor(Date.parse("2026-10-01T00:00:00.000Z") / 1000),
+        creditBuckets: {
+          prompt: { used: 30, available: 70, limit: 100 },
+          flow: { used: 20, available: 180, limit: 200 },
+          flex: { used: 5, available: 45, limit: 50 },
+        },
+      });
+      const request = sequentialFetch([response]);
+      const report = await testAdapter({
+        sources: [createDevinEnvSource({})],
+        ompBroker: broker,
+        fetch: request,
+      }).fetchQuota(OPTIONS);
+
+      expect(report).toMatchObject({
+        source: "omp:devin",
+        state: { status: "fresh", authStatus: "usable" },
+        account: {
+          email: "devin@example.test",
+          accountId: "devin-account-fixture",
+          organization: "Example Organization",
+          organizationId: "devin-org-fixture",
+        },
+        plan: "MAX",
+        windows: [{ id: "weekly", percentRemaining: 65 }],
+        credits: {
+          buckets: [
+            {
+              id: "prompt",
+              used: 30,
+              available: 70,
+              limit: 100,
+              unit: "credits",
+              startsAt: "2026-09-01T00:00:00.000Z",
+              resetsAt: "2026-10-01T00:00:00.000Z",
+            },
+            {
+              id: "flow",
+              used: 20,
+              available: 180,
+              limit: 200,
+              unit: "credits",
+              startsAt: "2026-09-01T00:00:00.000Z",
+              resetsAt: "2026-10-01T00:00:00.000Z",
+            },
+            {
+              id: "flex",
+              used: 5,
+              available: 45,
+              limit: 50,
+              unit: "credits",
+              startsAt: "2026-09-01T00:00:00.000Z",
+              resetsAt: "2026-10-01T00:00:00.000Z",
+            },
+          ],
+        },
+        attempts: [
+          {
+            source: DEVIN_ENV_SOURCE,
+            status: "skipped",
+            error: "devin_credential_unavailable",
+          },
+          { source: "omp:devin", status: "success" },
+        ],
+      });
+      expect(JSON.stringify(report)).not.toContain(SESSION_TOKEN);
+
+      const [input, init] = request.mock.calls[0];
+      expect(new URL(String(input)).href).toBe(
+        `https://server.codeium.com${DEVIN_USER_STATUS_PATH}`,
+      );
+      const headers = new Headers(init?.headers);
+      expect(headers.get("content-type")).toBe("application/proto");
+      expect(headers.get("accept")).toBe("*/*");
+      expect(headers.get("connect-protocol-version")).toBe("1");
+      const requestFields = readTestProto(
+        new Uint8Array(init?.body as ArrayBuffer),
+      );
+      const metadataFields = readTestProto(testProtoBytes(requestFields, 1)!);
+      expect({
+        ideName: testProtoString(metadataFields, 1),
+        ideVersion: testProtoString(metadataFields, 7),
+        ideType: testProtoString(metadataFields, 28),
+        extensionName: testProtoString(metadataFields, 12),
+        extensionVersion: testProtoString(metadataFields, 2),
+        apiKey: testProtoString(metadataFields, 3),
+        locale: testProtoString(metadataFields, 4),
+        os: testProtoString(metadataFields, 5),
+        userJwt: testProtoString(metadataFields, 21) ?? "",
+      }).toEqual({
+        ideName: "devin-cli",
+        ideVersion: "3000.6.2",
+        ideType: "chisel",
+        extensionName: "chisel",
+        extensionVersion: "3000.6.2",
+        apiKey: SESSION_TOKEN,
+        locale: "en",
+        os: process.platform === "win32" ? "windows" : process.platform,
+        userJwt: "",
+      });
+    },
+  );
 
   it("declares env before the credentials file", () => {
     expect([...DEVIN_SOURCE_ORDER]).toEqual([
@@ -269,22 +401,21 @@ describe("Devin credential matrix", () => {
     });
   });
 
-  it("does not bind a daily figure without evidence that the vendor enforces it", () => {
+  it("includes a daily quota when reset data is present", () => {
     const payload = structuredClone(MAX) as {
       planInfo: Record<string, unknown>;
     };
     delete payload.planInfo.hideDailyQuota;
     const normalized = normalizeDevinPayload(payload, NOW);
-    expect(normalized.windows.map((window) => window.id)).toEqual(["weekly"]);
-    expect(normalized.untrustedWindowIds).toEqual(["daily"]);
-    expect(interpretNormalized(normalized).quotaSemantics).toMatchObject({
-      status: "partial",
-      unresolvedWindowIds: ["daily"],
-    });
+    expect(normalized.windows.map((window) => window.id)).toEqual([
+      "weekly",
+      "daily",
+    ]);
+    expect(normalized.untrustedWindowIds).toEqual([]);
     expect(
       interpretNormalized(normalized).quotaSemantics?.effectiveAvailability[0]
         ?.effectivePercentRemaining,
-    ).toBeUndefined();
+    ).toBe(10);
   });
 
   it("rejects a hideDailyQuota that is not a boolean", () => {
@@ -293,6 +424,15 @@ describe("Devin credential matrix", () => {
     };
     payload.planInfo.hideDailyQuota = "true";
     expect(() => normalizeDevinPayload(payload, NOW)).toThrow("schema_invalid");
+  });
+
+  it("omits a hidden weekly window without omitting daily", () => {
+    const payload = structuredClone(PRO) as {
+      planInfo: Record<string, unknown>;
+    };
+    payload.planInfo.hideWeeklyQuota = true;
+    const normalized = normalizeDevinPayload(payload, NOW);
+    expect(normalized.windows.map((window) => window.id)).toEqual(["daily"]);
   });
 
   it("names an out-of-range percent as untrusted and keeps semantics partial", () => {
@@ -323,9 +463,12 @@ describe("Devin credential matrix", () => {
     ).toBeUndefined();
   });
 
-  it("fails closed on a non-quota billing strategy and still reports credits", () => {
+  it("includes quota windows with reset data on a non-quota billing strategy", () => {
     const normalized = normalizeDevinPayload(NON_QUOTA, NOW);
-    expect(normalized.windows).toEqual([]);
+    expect(normalized.windows.map((window) => window.id)).toEqual([
+      "weekly",
+      "daily",
+    ]);
     expect(normalized.credits).toEqual({ remaining: 5, unit: "usd" });
     expect(JSON.stringify(normalized)).not.toContain("acuConsumed");
     expect(JSON.stringify(normalized)).not.toContain("acuLimit");
@@ -333,9 +476,11 @@ describe("Devin credential matrix", () => {
 
   it.each([
     [
-      "quota fields without a billing strategy",
+      "quota fields without reset evidence or billing strategy",
       (payload: DevinTestPayload) => {
         delete payload.planInfo.billingStrategy;
+        delete payload.userStatus.planStatus.dailyQuotaResetAtUnix;
+        delete payload.userStatus.planStatus.weeklyQuotaResetAtUnix;
       },
     ],
     [
@@ -778,6 +923,7 @@ describe("Devin auth inspection", () => {
     expect(report.sources.map((source) => source.status)).toEqual([
       "available",
       "missing",
+      "missing",
     ]);
     expect(JSON.stringify(report)).not.toContain(SYNTHETIC_KEY);
   });
@@ -787,15 +933,17 @@ function testAdapter(
   overrides: Partial<{
     fetch: typeof fetch;
     sources: readonly DevinCredentialSource[];
+    ompBroker?: LocalOAuthBroker;
     readCachedProvider: (contextId: string) => ProviderQuota | undefined;
     deleteCachedProvider: (provider: "devin") => void;
     deadlineMs: number;
   }> = {},
-) {
+): ReturnType<typeof createDevinAdapter> {
   return createDevinAdapter({
     sources: overrides.sources ?? [
       createDevinEnvSource({ WINDSURF_API_KEY: SYNTHETIC_KEY }),
     ],
+    ...(overrides.ompBroker ? { ompBroker: overrides.ompBroker } : {}),
     fetch:
       overrides.fetch ??
       (sequentialFetch([jsonResponse(PRO)]) as unknown as typeof fetch),
@@ -810,6 +958,184 @@ function testAdapter(
   });
 }
 
+type TestProtoField = {
+  number: number;
+  wire: number;
+  value: number | Uint8Array;
+};
+
+function ompDevinResponse(input: {
+  email: string;
+  accountId: string;
+  organizationId: string;
+  organization: string;
+  weeklyRemaining: number;
+  weeklyReset: number;
+  tier: number;
+  planStart: number;
+  planEnd: number;
+  creditBuckets: Record<
+    "prompt" | "flow" | "flex",
+    { used: number; available: number; limit: number }
+  >;
+}): Response {
+  const planStatus = joinProto([
+    testProtoInt(15, input.weeklyRemaining),
+    testProtoInt(18, input.weeklyReset),
+    testProtoTimestamp(2, input.planStart),
+    testProtoTimestamp(3, input.planEnd),
+    testProtoInt(6, input.creditBuckets.prompt.used),
+    testProtoInt(8, input.creditBuckets.prompt.available),
+    testProtoInt(5, input.creditBuckets.flow.used),
+    testProtoInt(9, input.creditBuckets.flow.available),
+    testProtoInt(7, input.creditBuckets.flex.used),
+    testProtoInt(4, input.creditBuckets.flex.available),
+  ]);
+  const devinInfo = joinProto([
+    testProtoStringField(4, input.organizationId),
+    testProtoStringField(8, input.organization),
+  ]);
+  const userStatus = joinProto([
+    testProtoStringField(5, input.organizationId),
+    testProtoStringField(7, input.email),
+    testProtoInt(10, input.tier),
+    testProtoMessage(13, planStatus),
+    testProtoStringField(36, input.accountId),
+  ]);
+  const planInfo = joinProto([
+    testProtoStringField(2, "Max"),
+    testProtoInt(12, input.creditBuckets.prompt.limit),
+    testProtoInt(13, input.creditBuckets.flow.limit),
+    testProtoInt(14, input.creditBuckets.flex.limit),
+    testProtoMessage(33, devinInfo),
+    testProtoInt(35, 2),
+    testProtoInt(36, 1),
+  ]);
+  return new Response(
+    joinProto([testProtoMessage(1, userStatus), testProtoMessage(2, planInfo)])
+      .buffer,
+    { status: 200, headers: { "content-type": "application/proto" } },
+  );
+}
+function testProtoTimestamp(
+  number: number,
+  seconds: number,
+): Uint8Array<ArrayBuffer> {
+  return testProtoMessage(
+    number,
+    joinProto([testProtoInt(1, seconds), testProtoInt(2, 0)]),
+  );
+}
+
+function testProtoStringField(
+  number: number,
+  value: string,
+): Uint8Array<ArrayBuffer> {
+  return testProtoMessage(number, new TextEncoder().encode(value));
+}
+
+function testProtoMessage(
+  number: number,
+  value: Uint8Array<ArrayBuffer>,
+): Uint8Array<ArrayBuffer> {
+  return joinProto([
+    testProtoVarint((number << 3) | 2),
+    testProtoVarint(value.length),
+    value,
+  ]);
+}
+
+function testProtoInt(number: number, value: number): Uint8Array<ArrayBuffer> {
+  return joinProto([testProtoVarint(number << 3), testProtoVarint(value)]);
+}
+
+function testProtoVarint(value: number): Uint8Array<ArrayBuffer> {
+  const bytes: number[] = [];
+  let remaining = value;
+  while (remaining > 0x7f) {
+    bytes.push((remaining & 0x7f) | 0x80);
+    remaining >>>= 7;
+  }
+  bytes.push(remaining);
+  const result = new Uint8Array(bytes.length);
+  result.set(bytes);
+  return result;
+}
+
+function joinProto(
+  parts: readonly Uint8Array<ArrayBuffer>[],
+): Uint8Array<ArrayBuffer> {
+  const result = new Uint8Array(
+    parts.reduce((total, part) => total + part.length, 0),
+  );
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.length;
+  }
+  return result;
+}
+
+function readTestProto(bytes: Uint8Array): TestProtoField[] {
+  const fields: TestProtoField[] = [];
+  let offset = 0;
+  while (offset < bytes.length) {
+    const key = readTestVarint(bytes, offset);
+    offset = key.offset;
+    const number = key.value >>> 3;
+    const wire = key.value & 7;
+    if (wire === 0) {
+      const value = readTestVarint(bytes, offset);
+      fields.push({ number, wire, value: value.value });
+      offset = value.offset;
+    } else if (wire === 2) {
+      const length = readTestVarint(bytes, offset);
+      offset = length.offset;
+      fields.push({
+        number,
+        wire,
+        value: bytes.subarray(offset, offset + length.value),
+      });
+      offset += length.value;
+    } else {
+      throw new Error("unsupported fixture wire type");
+    }
+  }
+  return fields;
+}
+
+function readTestVarint(
+  bytes: Uint8Array,
+  start: number,
+): { value: number; offset: number } {
+  let value = 0;
+  let offset = start;
+  for (let shift = 0; shift < 35 && offset < bytes.length; shift += 7) {
+    const byte = bytes[offset];
+    offset += 1;
+    value |= (byte & 0x7f) << shift;
+    if ((byte & 0x80) === 0) return { value, offset };
+  }
+  throw new Error("invalid fixture varint");
+}
+
+function testProtoBytes(
+  fields: TestProtoField[],
+  number: number,
+): Uint8Array | undefined {
+  const field = fields.find(
+    (candidate) => candidate.number === number && candidate.wire === 2,
+  );
+  return field?.value instanceof Uint8Array ? field.value : undefined;
+}
+
+function testProtoString(
+  fields: TestProtoField[],
+  number: number,
+): string | undefined {
+  const bytes = testProtoBytes(fields, number);
+  return bytes ? new TextDecoder().decode(bytes) : undefined;
+}
 function interpretNormalized(
   normalized: ReturnType<typeof normalizeDevinPayload>,
 ): ProviderQuota {

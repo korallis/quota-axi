@@ -498,6 +498,7 @@ describe("Codex Pi sibling account lanes", () => {
     expect(auth[0]).toMatchObject({ accountKey: "codex-home" });
     expect(auth[0]?.sources.map((source) => source.source)).toEqual([
       "auth-json",
+      "omp:openai-codex",
       "cli-rpc",
     ]);
   });
@@ -765,6 +766,7 @@ describe("Codex Pi sibling account lanes", () => {
       auth[0]?.sources.map((source) => [source.source, source.status]),
     ).toEqual([
       ["auth-json", "missing"],
+      ["omp:openai-codex", "missing"],
       ["cli-rpc", "available"],
     ]);
   });

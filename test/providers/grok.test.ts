@@ -297,28 +297,10 @@ describe("Grok consumer quota parsing", () => {
     expect(result.windows).toEqual([
       {
         id: "credits",
-        label: "week",
-        kind: "weekly",
+        label: "credits",
+        kind: "credits",
         percentUsed: 18.25,
         percentRemaining: 81.75,
-        startsAt: "2026-07-20T20:00:00.000Z",
-        resetsAt: "2026-07-27T20:00:00.000Z",
-      },
-      {
-        id: "product:grok_build",
-        label: "Grok Build",
-        kind: "weekly",
-        percentUsed: 33.25,
-        percentRemaining: 66.75,
-        startsAt: "2026-07-20T20:00:00.000Z",
-        resetsAt: "2026-07-27T20:00:00.000Z",
-      },
-      {
-        id: "product:chat",
-        label: "Chat",
-        kind: "weekly",
-        percentUsed: 100,
-        percentRemaining: 0,
         startsAt: "2026-07-20T20:00:00.000Z",
         resetsAt: "2026-07-27T20:00:00.000Z",
       },
@@ -355,12 +337,15 @@ describe("Grok consumer quota parsing", () => {
       }),
     );
 
-    expect(result.windows).toMatchObject([
-      { id: "credits", percentUsed: 0, percentRemaining: 100 },
+    expect(result.windows).toEqual([
       {
-        id: "product:grok_build",
+        id: "credits",
+        label: "credits",
+        kind: "credits",
         percentUsed: 0,
         percentRemaining: 100,
+        startsAt: "2026-07-20T20:00:00.000Z",
+        resetsAt: "2026-07-27T20:00:00.000Z",
       },
     ]);
     expect(result.credits).toEqual({ remaining: 0, unit: "credits" });
@@ -390,16 +375,13 @@ describe("Grok consumer quota parsing", () => {
       "2026-07-23T07:05:00.000Z",
     );
 
-    expect(result.windows).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "credits",
-          label: "week",
-          kind: "weekly",
-        }),
-        expect.objectContaining({ id: "product:grok_build", kind: "weekly" }),
-      ]),
-    );
+    expect(result.windows).toEqual([
+      expect.objectContaining({
+        id: "credits",
+        label: "credits",
+        kind: "credits",
+      }),
+    ]);
     expect(result.credits).toEqual({ remaining: 0, unit: "credits" });
     expect(report.quotaSemantics?.effectiveAvailability).toContainEqual(
       expect.objectContaining({
@@ -418,12 +400,13 @@ describe("Grok consumer quota parsing", () => {
       }),
     );
 
-    expect(result.windows[1]).toMatchObject({
-      id: "product:unknown_99",
-      label: "Product 99",
-      kind: "monthly",
-      percentUsed: 12.5,
-    });
+    expect(result.windows).toEqual([
+      expect.objectContaining({
+        id: "credits",
+        label: "credits",
+        kind: "credits",
+      }),
+    ]);
   });
 
   it("rejects a missing config", () => {
@@ -2858,10 +2841,15 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
         source: "auth-json",
         path: process.env.GROK_AUTH_JSON,
         status: "available",
+        error: undefined,
       },
       {
         source: "pi:xai",
         status: "available",
+      },
+      {
+        source: "omp:xai-oauth",
+        status: "missing",
       },
     ]);
   });
@@ -2971,8 +2959,8 @@ describe("Grok CLI rendering regression", () => {
       windows: [
         {
           id: "credits",
-          label: "week",
-          kind: "weekly",
+          label: "credits",
+          kind: "credits",
           percentUsed: 0,
           percentRemaining: 100,
         },
@@ -2980,8 +2968,8 @@ describe("Grok CLI rendering regression", () => {
     });
 
     const toon = await captureCli(["--provider", "grok", "--full"]);
-    expect(toon).toContain("grok,credits,week,100");
-    expect(toon).not.toContain("grok,credits,week,unknown");
+    expect(toon).toContain("grok,all_products,100");
+    expect(toon).not.toContain("grok,all_products,unknown");
     expect(await captureCli(["--provider", "grok"])).toContain(
       "grok,all_products,100",
     );

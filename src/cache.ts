@@ -30,7 +30,14 @@ import { PROVIDER_IDS } from "./types.js";
 const PROVIDER_SOURCES = [
   "oauth",
   "pi:openai-codex",
+  "pi:anthropic",
+  "omp:anthropic",
+  "omp:google-antigravity",
   "cli-rpc",
+  "omp:openai-codex",
+  "omp:kimi-code",
+  "omp:xai-oauth",
+  "omp:devin",
   "cli",
   "api",
   "web",
@@ -98,7 +105,7 @@ const CREDENTIAL_CONTEXT_ID = /^[a-f0-9]{64}$/;
 const CONTEXT_SCOPED_PROVIDERS: Partial<
   Record<ProviderId, (provider: ProviderQuota) => string | undefined>
 > = {
-  claude: claudeCredentialContextId,
+  claude: claudeCacheContextId,
   kimi: kimiReadingContextId,
   commandcode: commandCodeReadingContextId,
   elevenlabs: elevenLabsReadingContextId,
@@ -114,6 +121,9 @@ const CONTEXT_SCOPED_PROVIDERS: Partial<
  * `JSON.stringify`, `Object.keys` and the TOON encoder all skip symbol keys.
  */
 const CODEX_STORED_ACCOUNT_ID = Symbol("codexStoredAccountId");
+const CLAUDE_LOCAL_CREDENTIAL_IDENTITY = Symbol(
+  "claudeLocalCredentialIdentity",
+);
 
 type CodexStampedQuota = ProviderQuota & {
   [CODEX_STORED_ACCOUNT_ID]?: string;
@@ -125,6 +135,34 @@ export function stampCodexStoredAccountId(
 ): void {
   if (accountId)
     (provider as CodexStampedQuota)[CODEX_STORED_ACCOUNT_ID] = accountId;
+}
+
+type ClaudeLocalStampedQuota = ProviderQuota & {
+  [CLAUDE_LOCAL_CREDENTIAL_IDENTITY]?: string;
+};
+
+export function stampClaudeLocalCredentialIdentity(
+  provider: ProviderQuota,
+  identity: string | undefined,
+): ProviderQuota {
+  if (identity) {
+    (provider as ClaudeLocalStampedQuota)[CLAUDE_LOCAL_CREDENTIAL_IDENTITY] =
+      identity;
+  }
+  return provider;
+}
+
+function claudeCacheContextId(provider: ProviderQuota): string | undefined {
+  if (
+    provider.source === "pi:anthropic" ||
+    provider.source === "omp:anthropic"
+  ) {
+    const identity = (provider as ClaudeLocalStampedQuota)[
+      CLAUDE_LOCAL_CREDENTIAL_IDENTITY
+    ];
+    return identity ? claudeCredentialContextId(identity) : undefined;
+  }
+  return claudeCredentialContextId();
 }
 
 function codexStampContextId(provider: ProviderQuota): string | undefined {

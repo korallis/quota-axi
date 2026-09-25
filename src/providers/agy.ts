@@ -181,30 +181,34 @@ export async function fetchQuotaWithRuntime(
   }
 
   if (runtime.resolveOmpAntigravity) {
-    attempts.push({ source: "omp:google-antigravity", status: "failed" });
-    try {
-      const quota = await fetchOmpAntigravityQuota(runtime);
-      attempts[attempts.length - 1] = {
-        source: "omp:google-antigravity",
-        status: "success",
-      };
-      return successProvider({
-        provider: "agy",
-        label: "Antigravity",
-        source: "omp:google-antigravity",
-        account: quota.account,
-        windows: quota.windows,
-        refreshedAt: quota.refreshedAt,
-        sourcesTried: sourceNames(attempts),
-        attempts,
-      });
-    } catch (error) {
-      const message = errorMessage(error);
-      attempts[attempts.length - 1] = {
-        source: "omp:google-antigravity",
-        status: message === "credentials_missing" ? "skipped" : "failed",
-        error: message,
-      };
+    const resolution = await runtime.resolveOmpAntigravity();
+    if (resolution.status !== "missing") {
+      attempts.push({ source: "omp:google-antigravity", status: "failed" });
+      try {
+        const quota = await fetchOmpAntigravityQuota(resolution);
+        attempts[attempts.length - 1] = {
+          source: "omp:google-antigravity",
+          status: "success",
+        };
+        return successProvider({
+          provider: "agy",
+          label: "Antigravity",
+          source: "omp:google-antigravity",
+          account: quota.account,
+          windows: quota.windows,
+          refreshedAt: quota.refreshedAt,
+          sourcesTried: sourceNames(attempts),
+          attempts,
+        });
+      } catch (error) {
+        const message = errorMessage(error);
+        finalFailure = new Error(message);
+        attempts[attempts.length - 1] = {
+          source: "omp:google-antigravity",
+          status: "failed",
+          error: message,
+        };
+      }
     }
   }
 
@@ -1289,12 +1293,13 @@ const OMP_ANTIGRAVITY_TIMEOUT_MS = 15_000;
 const OMP_ANTIGRAVITY_QUOTA_PATH = "/v1internal:retrieveUserQuotaSummary";
 const OMP_ANTIGRAVITY_MODELS_PATH = "/v1internal:fetchAvailableModels";
 
-async function fetchOmpAntigravityQuota(runtime: AgyProbeRuntime): Promise<{
+async function fetchOmpAntigravityQuota(
+  resolution: LocalOAuthResolution,
+): Promise<{
   account?: ProviderQuota["account"];
   windows: QuotaWindow[];
   refreshedAt: string;
 }> {
-  const resolution = await runtime.resolveOmpAntigravity!();
   if (resolution.status === "missing") throw new Error("credentials_missing");
   if (resolution.status !== "available") {
     throw new Error(

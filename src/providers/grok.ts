@@ -38,6 +38,10 @@ import {
   type PiXaiCredentialBroker,
   type PiXaiCredentialResolution,
 } from "./pi-xai-credential.js";
+import {
+  createOmpOAuthCredentialBroker,
+  type LocalOAuthBroker,
+} from "./local-oauth-credential.js";
 import { withUsageFetchFailure } from "./usage-fetch-failure.js";
 
 const CONSUMER_QUOTA_URL =
@@ -59,16 +63,6 @@ const GROK_PI_CREDENTIAL_RESOLUTION_ERROR =
 const MODEL_AUTH_ONLY_ERROR = "model_auth_only";
 const MODEL_AUTH_PROBE_LIVE = "model_auth_probe_live";
 const PI_QUOTA_NOT_NEEDED_ERROR = "quota_not_needed";
-
-const PRODUCT_NAMES: Record<number, { id: string; label: string }> = {
-  0: { id: "unspecified", label: "Other" },
-  1: { id: "api", label: "API" },
-  2: { id: "grok_build", label: "Grok Build" },
-  3: { id: "grok_plugins", label: "Grok Plugins" },
-  4: { id: "chat", label: "Chat" },
-  5: { id: "imagine", label: "Imagine" },
-  6: { id: "voice", label: "Voice" },
-};
 
 type GrokCredentials = {
   key: string;
@@ -147,10 +141,12 @@ type ProtoField = VarintField | ByteField;
 
 type GrokDependencies = {
   piXaiBroker: PiXaiCredentialBroker;
+  ompBroker: LocalOAuthBroker;
 };
 
 const defaultGrokDependencies: GrokDependencies = {
   piXaiBroker: createPiXaiCredentialBroker(),
+  ompBroker: createOmpOAuthCredentialBroker("xai-oauth"),
 };
 
 export function createGrokAdapter(
@@ -287,14 +283,70 @@ async function fetchQuotaWithDependencies(
     selection,
     refreshAttempt,
   );
-  const transientError = selection.transientError;
-  const retryAfter = selection.retryAfter;
   const cliRefreshNeeded = selection.results.some(
     (result) =>
       result.source === GROK_SOURCE &&
       result.refreshable === true &&
       result.outcome === "rejected",
   );
+  let ompRefreshableExpiredRejected = false;
+  if (
+    selection.outcome !== "quota" &&
+    selection.outcome !== "transient" &&
+    selection.transientError === undefined
+  ) {
+    const resolution = await dependencies.ompBroker.resolve();
+    if (resolution.status === "available" || resolution.status === "expired") {
+      try {
+        const quota = await fetchGrokConsumerQuota({
+          key: resolution.credential.accessToken,
+          email: resolution.credential.email,
+        });
+        const creditsWindow = quota.windows.find(
+          (window) => window.id === "credits",
+        );
+        if (!creditsWindow) throw new Error("Grok credits window unavailable");
+        attempts.push({ source: "omp:xai-oauth", status: "success" });
+        return withAuthStatus(
+          successProvider({
+            provider: "grok",
+            label: "Grok",
+            source: "omp:xai-oauth",
+            account: quota.account,
+            windows: [{ ...creditsWindow, kind: "credits", label: "credits" }],
+            credits: quota.credits,
+            refreshedAt: quota.refreshedAt,
+            sourcesTried: sourceNames(attempts),
+            attempts,
+          }),
+          "usable",
+          cliRefreshNeeded,
+        );
+      } catch (error) {
+        const errorText = errorMessage(error);
+        ompRefreshableExpiredRejected =
+          resolution.status === "expired" &&
+          resolution.refreshable &&
+          isDefinitiveGrokAuthError(errorText);
+        attempts.push({
+          source: "omp:xai-oauth",
+          status: "failed",
+          error: errorText,
+          credentialPresent: true,
+        });
+      }
+    } else if (resolution.status !== "missing") {
+      attempts.push({
+        source: "omp:xai-oauth",
+        status: "failed",
+        error: `credentials_${resolution.status}`,
+        credentialPresent: true,
+      });
+    }
+  }
+
+  const transientError = selection.transientError;
+  const retryAfter = selection.retryAfter;
 
   if (selection.outcome === "quota" && selection.result) {
     const quota = selection.result;
@@ -315,8 +367,9 @@ async function fetchQuotaWithDependencies(
     );
   }
 
-  const authStatus =
-    selection.outcome === "live_no_quota"
+  const authStatus = ompRefreshableExpiredRejected
+    ? "expired_refreshable"
+    : selection.outcome === "live_no_quota"
       ? "usable"
       : classifyGrokAuthStatus(cliState, piResolution, selection);
 
@@ -716,6 +769,7 @@ async function inspectAuthWithDependencies(
                 piInspection.status === "invalid"
               ? "invalid"
               : "missing";
+  const ompInspection = await dependencies.ompBroker.inspect();
   return {
     provider: "grok",
     sources: [
@@ -724,6 +778,16 @@ async function inspectAuthWithDependencies(
         source: PI_XAI_CREDENTIAL_SOURCE,
         status: piStatus,
         ...(piInspection.error ? { error: piInspection.error } : {}),
+      },
+      {
+        source: "omp:xai-oauth",
+        status:
+          ompInspection.status === "unsupported"
+            ? "invalid"
+            : ompInspection.status,
+        ...(ompInspection.status === "expired"
+          ? { error: "credentials_expired" }
+          : {}),
       },
     ],
   };
@@ -871,47 +935,14 @@ export function normalizeGrokConsumerPayload(
     periodStart !== undefined &&
     resetsAt !== undefined;
 
-  const windowKind =
-    periodType === "weekly" || periodType === "monthly"
-      ? periodType
-      : "credits";
-  const windowLabel =
-    periodType === "weekly"
-      ? "week"
-      : periodType === "monthly"
-        ? "month"
-        : "credits";
-
   const windows: QuotaWindow[] = [];
   const sharedExplicit = floatAt(config, 1);
   if (sharedExplicit !== undefined || validCurrentPeriod) {
     const percentUsed = clampExactPercent(sharedExplicit ?? 0);
     windows.push({
       id: "credits",
-      label: windowLabel,
-      kind: windowKind,
-      percentUsed,
-      percentRemaining: 100 - percentUsed,
-      ...(periodStart ? { startsAt: periodStart } : {}),
-      resetsAt,
-    });
-  }
-
-  for (const productPayload of messagesAt(config, 7)) {
-    const product = scanMessage(productPayload);
-    const explicit = floatAt(product, 2);
-    if (explicit === undefined && !validCurrentPeriod) continue;
-    const productNumber = safeNumber(varintAt(product, 1) ?? 0n);
-    if (productNumber === undefined) continue;
-    const productName = PRODUCT_NAMES[productNumber] ?? {
-      id: `unknown_${productNumber}`,
-      label: `Product ${productNumber}`,
-    };
-    const percentUsed = clampExactPercent(explicit ?? 0);
-    windows.push({
-      id: `product:${productName.id}`,
-      label: productName.label,
-      kind: windowKind,
+      label: "credits",
+      kind: "credits",
       percentUsed,
       percentRemaining: 100 - percentUsed,
       ...(periodStart ? { startsAt: periodStart } : {}),
