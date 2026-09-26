@@ -1911,8 +1911,14 @@ describe("Kimi credential outcomes and cache policy", () => {
       expect(rejected.state.status).toBe("auth_required");
       expect(rejected.attempts).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ source: "pi:kimi-coding", status: "skipped" }),
-          expect.objectContaining({ source: "omp:kimi-code", status: "failed" }),
+          expect.objectContaining({
+            source: "pi:kimi-coding",
+            status: "skipped",
+          }),
+          expect.objectContaining({
+            source: "omp:kimi-code",
+            status: "failed",
+          }),
         ]),
       );
       expect(readCachedProvider("kimi")).toBeUndefined();
