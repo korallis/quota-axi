@@ -1513,6 +1513,38 @@ describe("Grok expired access-token classification", () => {
     expect(process.exitCode).toBe(1);
   });
 
+  it.each(["error", "throw"] as const)(
+    "keeps Grok cache without claiming sign-out when OMP resolution returns %s",
+    async (mode) => {
+      writeCachedProviders([cachedGrok("web")]);
+      const adapter = createGrokAdapter({
+        ompBroker: {
+          resolve: async () => {
+            if (mode === "throw") throw new Error("unreadable fixture store");
+            return { status: "error" as const };
+          },
+        },
+      });
+      const result = await adapter.fetchQuota({
+        allowKeychainPrompt: false,
+        refreshCredentials: false,
+      });
+
+      expect(result.state).toMatchObject({
+        status: "error",
+        error: "OMP xAI credential resolution failed",
+      });
+      expect(result.state.error).not.toMatch(/sign-in/i);
+      expect(result.attempts).toContainEqual({
+        source: "omp:xai-oauth",
+        status: "failed",
+        error: "credentials_error",
+        credentialPresent: true,
+      });
+      expect(readCachedProvider("grok")?.windows[0]?.percentRemaining).toBe(80);
+    },
+  );
+
   it("keeps the cached snapshot when the present Grok auth store cannot be parsed", async () => {
     writeCachedProviders([cachedGrok("web")]);
     mkdirSync(dirname(process.env.GROK_AUTH_JSON!), { recursive: true });

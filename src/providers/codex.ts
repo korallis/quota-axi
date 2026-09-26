@@ -2,7 +2,6 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { spawn } from "node:child_process";
 import {
-  codexStoredAccountId,
   retireCodexAccount,
   retireCachedSlot,
   readCachedCodexProvider,
@@ -418,6 +417,11 @@ async function discoverCodexAccounts(
   return accounts.length > 0 ? accounts : undefined;
 }
 
+const CODEX_CREDENTIAL_ACCOUNT_ID = Symbol("codexCredentialAccountId");
+type CodexCredentialQuota = ProviderQuota & {
+  [CODEX_CREDENTIAL_ACCOUNT_ID]?: string;
+};
+
 async function fetchExpandedOmpQuota(
   dependencies: CodexDependencies,
   reports: ProviderQuota[],
@@ -434,19 +438,22 @@ async function fetchExpandedOmpQuota(
     dependencies,
     reports[reports.length - 1]!,
   );
-  const ompAccountId = fallback
-    ? (fallback.account?.accountId ?? codexStoredAccountId(fallback))
-    : undefined;
+  const ompStoredId = (fallback as CodexCredentialQuota | undefined)?.[
+    CODEX_CREDENTIAL_ACCOUNT_ID
+  ];
+  const ompVendorId = fallback?.account?.accountId;
   if (
     fallback?.source === "omp:openai-codex" &&
     fallback.state.status === "fresh" &&
-    (ompAccountId === undefined ||
-      !reports.some(
-        (report) =>
-          report.accountKeys?.includes(CODEX_HOME_ACCOUNT_KEY) &&
-          (report.account?.accountId ?? codexStoredAccountId(report)) ===
-            ompAccountId,
-      ))
+    !reports.some(
+      (report) =>
+        report.accountKeys?.includes(CODEX_HOME_ACCOUNT_KEY) &&
+        ((ompStoredId !== undefined &&
+          (report as CodexCredentialQuota)[CODEX_CREDENTIAL_ACCOUNT_ID] ===
+            ompStoredId) ||
+          (ompVendorId !== undefined &&
+            report.account?.accountId === ompVendorId)),
+    )
   ) {
     return [
       ...reports,
@@ -992,6 +999,9 @@ function codexSuccessReport(
     report,
     storedAccountId ?? quota.account?.accountId,
   );
+  if (storedAccountId)
+    (report as CodexCredentialQuota)[CODEX_CREDENTIAL_ACCOUNT_ID] =
+      storedAccountId;
   const credentialKey = codexCredentialKey(source);
   if (credentialKey) report.accountKeys = [credentialKey];
   return report;

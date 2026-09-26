@@ -306,7 +306,12 @@ async function fetchQuotaWithDependencies(
     selection.outcome !== "transient" &&
     selection.transientError === undefined
   ) {
-    const resolution = await dependencies.ompBroker.resolve();
+    let resolution;
+    try {
+      resolution = await dependencies.ompBroker.resolve();
+    } catch {
+      resolution = { status: "error" as const };
+    }
     if (resolution.status === "available" || resolution.status === "expired") {
       try {
         const quota = await fetchGrokConsumerQuota({
@@ -353,6 +358,9 @@ async function fetchQuotaWithDependencies(
         error: `credentials_${resolution.status}`,
         credentialPresent: true,
       });
+      if (resolution.status === "error") {
+        ompTransientError = "OMP xAI credential resolution failed";
+      }
     }
   }
 

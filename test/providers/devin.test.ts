@@ -1114,6 +1114,41 @@ describe("Devin credential matrix", () => {
     },
   );
 
+  it.each([false, true])(
+    "reports OMP resolution failure instead of sign-out (native rejected: %s)",
+    async (nativeRejected) => {
+      const deleted: string[] = [];
+      const request = sequentialFetch(
+        nativeRejected ? [new Response(null, { status: 401 })] : [],
+      );
+      const report = await testAdapter({
+        sources: [
+          createDevinEnvSource(
+            nativeRejected ? { WINDSURF_API_KEY: SYNTHETIC_KEY } : {},
+          ),
+        ],
+        ompBroker: {
+          resolve: async () => ({ status: "error" }),
+        },
+        fetch: request,
+        retireCachedContext: (id) => deleted.push(id),
+      }).fetchQuota(OPTIONS);
+
+      expect(request).toHaveBeenCalledTimes(nativeRejected ? 1 : 0);
+      expect(report.state).toMatchObject({
+        status: "error",
+        error: "credential_resolution_failed",
+      });
+      expect(report.state.remedyCommand).toBeUndefined();
+      expect(report.attempts?.at(-1)).toMatchObject({
+        source: "omp:devin",
+        status: "failed",
+        error: "credentials_error",
+      });
+      expect(deleted).toHaveLength(nativeRejected ? 1 : 0);
+    },
+  );
+
   it("retires the matching cache when every probed credential is rejected", async () => {
     const deleted: string[] = [];
     const contextId = devinCacheContextId(

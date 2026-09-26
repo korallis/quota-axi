@@ -573,6 +573,16 @@ async function acquireDevinQuota(
       });
     }
 
+    if (ompResolution.status === "error") {
+      return failureReport(
+        new DevinFailure("credential_resolution_failed", {
+          staleEligible: true,
+        }),
+        undefined,
+        attempts,
+        dependencies,
+      );
+    }
     if (rejectedFailure) {
       return failureReport(
         rejectedFailure,

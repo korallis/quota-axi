@@ -352,6 +352,77 @@ describe("Codex Pi sibling account lanes", () => {
     },
   );
 
+  it.each([
+    { nativeVendor: "acct-vendor", ompVendor: undefined, expected: 2 },
+    { nativeVendor: undefined, ompVendor: "acct-vendor", expected: 2 },
+    {
+      nativeVendor: "acct-vendor",
+      ompVendor: undefined,
+      expected: 3,
+      ompStored: "acct-vendor",
+    },
+  ])(
+    "compares matching Codex identity evidence (native $nativeVendor, OMP $ompVendor, rows $expected)",
+    async ({ nativeVendor, ompVendor, expected, ompStored }) => {
+      writeNativeAuth("native-access-token", "acct-home");
+      writePiAuth({
+        "openai-codex-work": piOauthEntry({
+          access: "failed-pi-access-token",
+          accountId: "acct-work",
+        }),
+      });
+      const tokens: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url: unknown, init?: RequestInit) => {
+          const token = new Headers(init?.headers)
+            .get("authorization")
+            ?.replace(/^Bearer /, "");
+          tokens.push(token ?? "missing");
+          if (token === "native-access-token")
+            return usage(20, undefined, nativeVendor);
+          if (token === "omp-access-token")
+            return usage(35, undefined, ompVendor);
+          return new Response(null, { status: 503 });
+        }),
+      );
+      const resolve = vi.fn(async () => ({
+        status: "available" as const,
+        credential: {
+          accessToken: "omp-access-token",
+          accountId: ompStored ?? "acct-home",
+        },
+      }));
+      const adapter = (
+        await import("../../src/providers/codex.js")
+      ).createCodexAdapter({
+        ompBroker: { resolve, inspect: async () => ({ status: "available" }) },
+      });
+      const reports = await fetchAccountQuotas(adapter, OPTIONS);
+
+      expect(resolve).toHaveBeenCalledOnce();
+      expect(tokens).toContain("omp-access-token");
+      expect(reports.map((report) => report.accountKey)).toEqual(
+        expected === 2
+          ? ["codex-home", "openai-codex-work"]
+          : ["codex-home", "openai-codex-work", "omp:openai-codex"],
+      );
+      expect(reports[0]).toMatchObject({
+        source: "oauth",
+        state: { status: "fresh" },
+      });
+      expect(reports[1]).toMatchObject({
+        source: "pi:openai-codex-work",
+        state: { status: "error" },
+      });
+      if (expected === 3)
+        expect(reports[2]).toMatchObject({
+          source: "omp:openai-codex",
+          state: { status: "fresh" },
+        });
+    },
+  );
+
   it.each([429, 401, 503])(
     "keeps Pi lanes unchanged when the expanded OMP fallback returns %i",
     async (ompStatus) => {
