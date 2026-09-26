@@ -224,6 +224,7 @@ export async function fetchQuotaWithRuntime(
             candidate.origin,
             resolution.credential.cacheIdentity,
             resolution.credential.accessToken,
+            resolution.credential.projectId,
           )
         : undefined;
     if (candidate.source === "pi:google-antigravity") piContextId = contextId;

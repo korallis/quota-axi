@@ -1734,6 +1734,150 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
     );
   });
 
+  it.each(["available", "expired"] as const)(
+    "keeps OMP %s model auth usable without consumer quota",
+    async (status) => {
+      const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
+        url === XAI_MODELS_URL
+          ? Response.json({ data: [] })
+          : grpcResponse(new Uint8Array(), { status: 403 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const report = await createGrokAdapter({
+        ompBroker: {
+          resolve: async () =>
+            status === "expired"
+              ? {
+                  status,
+                  refreshable: true,
+                  credential: { accessToken: "synthetic-omp-access" },
+                }
+              : { status, credential: { accessToken: "synthetic-omp-access" } },
+          inspect: async () => ({ status }),
+        },
+      }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+
+      expect(report).toMatchObject({
+        source: "unavailable",
+        windows: [],
+        state: {
+          status: "unavailable",
+          authStatus: "usable",
+          error: "Grok model access available; quota unavailable",
+        },
+      });
+      expect(report.attempts?.at(-1)).toMatchObject({
+        source: "omp:xai-oauth",
+        status: "skipped",
+        error: "model_auth_probe_live",
+        degraded: false,
+      });
+      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+        CONSUMER_QUOTA_URL,
+        XAI_MODELS_URL,
+      ]);
+      const modelInit = fetchMock.mock.calls[1]?.[1] as RequestInit | undefined;
+      expect(modelInit).toMatchObject({
+        headers: {
+          Authorization: "Bearer synthetic-omp-access",
+          Accept: "application/json",
+        },
+        credentials: "omit",
+        redirect: "manual",
+      });
+      expect(modelInit?.body).toBeUndefined();
+      expect(JSON.stringify(report)).not.toContain("synthetic-omp-access");
+    },
+  );
+
+  it.each([
+    ["available", 401],
+    ["expired", 403],
+  ] as const)(
+    "requires an OMP %s bearer rejected by models after consumer HTTP %i to fail auth",
+    async (status, consumerStatus) => {
+      const fetchMock = vi.fn(async (url: string) =>
+        url === XAI_MODELS_URL
+          ? new Response(null, { status: 403 })
+          : grpcResponse(new Uint8Array(), { status: consumerStatus }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const report = await createGrokAdapter({
+        ompBroker: {
+          resolve: async () =>
+            status === "expired"
+              ? {
+                  status,
+                  refreshable: true,
+                  credential: { accessToken: "synthetic-omp-access" },
+                }
+              : { status, credential: { accessToken: "synthetic-omp-access" } },
+          inspect: async () => ({ status }),
+        },
+      }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+      expect(report.state).toMatchObject(
+        status === "expired"
+          ? {
+              status: "unavailable",
+              authStatus: "expired_refreshable",
+              error: "OMP xAI access token expired",
+            }
+          : {
+              status: "auth_required",
+              authStatus: "unusable",
+              error: "Grok sign-in required",
+            },
+      );
+      expect(report.attempts?.at(-1)).toMatchObject({
+        source: "omp:xai-oauth",
+        status: "failed",
+        error: "Grok sign-in required",
+      });
+      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+        CONSUMER_QUOTA_URL,
+        XAI_MODELS_URL,
+      ]);
+    },
+  );
+
+  it.each([
+    [429, "rate_limited", "Grok model access probe rate limited"],
+    [503, "error", "Grok model access probe unavailable"],
+    [302, "error", "Grok model access probe unavailable"],
+  ] as const)(
+    "keeps OMP model HTTP %i inconclusive rather than signed out",
+    async (modelStatus, status, error) => {
+      writeCachedProviders([cachedGrok("web")]);
+      const fetchMock = vi.fn(async (url: string) =>
+        url === XAI_MODELS_URL
+          ? new Response(null, { status: modelStatus })
+          : grpcResponse(new Uint8Array(), { status: 401 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const report = await createGrokAdapter({
+        ompBroker: {
+          resolve: async () => ({
+            status: "available",
+            credential: { accessToken: "synthetic-omp-access" },
+          }),
+          inspect: async () => ({ status: "available" }),
+        },
+      }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+      expect(report.state).toMatchObject({ status, error });
+      expect(report.state.authStatus).toBeUndefined();
+      expect(report.attempts?.at(-1)).toMatchObject({
+        source: "omp:xai-oauth",
+        status: "failed",
+        error,
+      });
+      expect(readCachedProvider("grok")?.source).toBe("web");
+      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+        CONSUMER_QUOTA_URL,
+        XAI_MODELS_URL,
+      ]);
+    },
+  );
+
   it("keeps product bounds on the OMP consumer-credits path", async () => {
     const payload = consumerPayload({
       percentUsed: 20,
@@ -1861,17 +2005,17 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
       expect(report.attempts).toContainEqual(
         expect.objectContaining({ source: "omp:xai-oauth", status: "failed" }),
       );
-      expect(fetchMock).toHaveBeenCalledTimes(source === "cli" ? 3 : 1);
+      expect(fetchMock).toHaveBeenCalledTimes(source === "cli" ? 4 : 2);
       expect(readCachedProvider("grok")?.windows[0]?.percentRemaining).toBe(80);
       expect(JSON.stringify(report)).not.toContain("expired-omp-token");
     },
   );
 
   it("names OMP-owned refreshable expiry without attributing it to Pi", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => grpcResponse(new Uint8Array(), { status: 403 })),
+    const fetchMock = vi.fn(async () =>
+      grpcResponse(new Uint8Array(), { status: 403 }),
     );
+    vi.stubGlobal("fetch", fetchMock);
     const report = await createGrokAdapter({
       ompBroker: {
         resolve: async () => ({
@@ -1889,6 +2033,7 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
       error: "OMP xAI access token expired",
     });
     expect(report.state.remedyCommand).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(report)).not.toContain("expired-omp-token");
   });
 

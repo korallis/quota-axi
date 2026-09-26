@@ -299,6 +299,7 @@ async function fetchQuotaWithDependencies(
       result.outcome === "rejected",
   );
   let ompRefreshableExpiredRejected = false;
+  let ompModelLive = false;
   let ompTransientError: string | undefined;
   let ompRetryAfter: string | undefined;
   if (
@@ -336,20 +337,44 @@ async function fetchQuotaWithDependencies(
         );
       } catch (error) {
         const errorText = errorMessage(error);
-        ompRefreshableExpiredRejected =
-          resolution.status === "expired" &&
-          resolution.refreshable &&
-          isDefinitiveGrokAuthError(errorText);
-        if (!isDefinitiveGrokAuthError(errorText)) {
-          ompTransientError = errorText;
-          if (error instanceof RateLimitError) ompRetryAfter = error.retryAfter;
+        const definitive = isDefinitiveGrokAuthError(errorText);
+        const probe = definitive
+          ? await probeGrokModelAccess(
+              XAI_MODELS_URL,
+              resolution.credential.accessToken,
+            )
+          : undefined;
+        if (probe?.kind === "live_no_quota") {
+          ompModelLive = true;
+          attempts.push({
+            source: "omp:xai-oauth",
+            status: "skipped",
+            error: MODEL_AUTH_PROBE_LIVE,
+            credentialPresent: true,
+            degraded: false,
+          });
+        } else {
+          const failureText =
+            probe?.kind === "transient" || probe?.kind === "rejected"
+              ? probe.error
+              : errorText;
+          ompRefreshableExpiredRejected =
+            probe?.kind === "rejected" &&
+            resolution.status === "expired" &&
+            resolution.refreshable;
+          if (probe?.kind === "transient" || !definitive) {
+            ompTransientError = failureText;
+            if (probe?.kind === "transient") ompRetryAfter = probe.retryAfter;
+            else if (error instanceof RateLimitError)
+              ompRetryAfter = error.retryAfter;
+          }
+          attempts.push({
+            source: "omp:xai-oauth",
+            status: "failed",
+            error: failureText,
+            credentialPresent: true,
+          });
         }
-        attempts.push({
-          source: "omp:xai-oauth",
-          status: "failed",
-          error: errorText,
-          credentialPresent: true,
-        });
       }
     } else if (resolution.status !== "missing") {
       attempts.push({
@@ -392,10 +417,10 @@ async function fetchQuotaWithDependencies(
     selection,
   );
   const authStatus =
-    ompTransientError !== undefined && localAuthStatus === "unusable"
-      ? undefined
-      : localAuthStatus === "usable"
-        ? "usable"
+    localAuthStatus === "usable" || ompModelLive
+      ? "usable"
+      : ompTransientError !== undefined && localAuthStatus === "unusable"
+        ? undefined
         : ompRefreshableExpiredRejected
           ? "expired_refreshable"
           : localAuthStatus;
@@ -430,7 +455,7 @@ async function fetchQuotaWithDependencies(
             : "unavailable",
         error:
           transientError ??
-          (selection.outcome === "live_no_quota"
+          (selection.outcome === "live_no_quota" || ompModelLive
             ? GROK_MODEL_AUTH_WITHOUT_QUOTA_ERROR
             : GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR),
         retryAfter,

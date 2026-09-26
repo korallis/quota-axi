@@ -138,6 +138,7 @@ export function agyOmpCredentialContextId(
   origin: string,
   credentialIdentity: string | undefined,
   accessToken: string,
+  projectId: string | undefined,
 ): string {
   const accessTokenDigest = createHash("sha256")
     .update(accessToken)
@@ -145,10 +146,11 @@ export function agyOmpCredentialContextId(
   return createHash("sha256")
     .update(
       JSON.stringify([
-        "agy-omp-credential-v1",
+        "agy-omp-credential-v2",
         origin,
         credentialIdentity,
         accessTokenDigest,
+        projectId,
       ]),
     )
     .digest("hex");

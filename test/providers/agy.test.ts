@@ -507,6 +507,89 @@ describe("Antigravity provider", () => {
     expect(readCachedProvider("agy")?.source).toBe("pi:google-antigravity");
   });
 
+  it.each([
+    ["pi", "project-a", "project-b"],
+    ["pi", "project-b", "project-a"],
+    ["omp", "project-a", "project-b"],
+    ["omp", "project-b", "project-a"],
+  ] as const)(
+    "scopes %s stale quota to requested %s rather than %s with the same bearer",
+    async (source, cachedProject, otherProject) => {
+      let outcome: "fresh" | "transient" | "rejected" = "fresh";
+      const fetchMock = vi.fn(
+        async (_url: string | URL | Request, _init?: RequestInit) =>
+          outcome === "fresh"
+            ? Response.json({
+                groups: [
+                  {
+                    buckets: [
+                      {
+                        bucketId: "gemini-5h",
+                        remainingFraction: 0.6,
+                        resetTime: new Date(
+                          Date.now() + 3_600_000,
+                        ).toISOString(),
+                      },
+                    ],
+                  },
+                ],
+              })
+            : new Response(null, {
+                status: outcome === "rejected" ? 401 : 503,
+              }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const runtimeFor = (projectId: string) => ({
+        ...runtimeWith({}),
+        ...(source === "pi"
+          ? {
+              resolvePiAntigravity: async () => ({
+                status: "available" as const,
+                credential: {
+                  accessToken: "synthetic-shared-access",
+                  projectId,
+                },
+              }),
+            }
+          : {
+              resolveOmpAntigravity: async () => ({
+                status: "available" as const,
+                credential: {
+                  accessToken: "synthetic-shared-access",
+                  projectId,
+                },
+              }),
+            }),
+      });
+      const fresh = await fetchQuotaWithRuntime(runtimeFor(cachedProject));
+      expect(fresh.state.status).toBe("fresh");
+      writeCachedProviders([fresh]);
+      outcome = "transient";
+      const other = await fetchQuotaWithRuntime(runtimeFor(otherProject));
+      expect(other.state.stale).toBe(false);
+      expect(other.windows).toEqual([]);
+      outcome = "rejected";
+      const otherRejection = await fetchQuotaWithRuntime(
+        runtimeFor(otherProject),
+      );
+      expect(otherRejection.state.status).toBe("auth_required");
+      expect(readCachedProvider("agy")?.windows).toEqual(fresh.windows);
+      outcome = "transient";
+      const same = await fetchQuotaWithRuntime(runtimeFor(cachedProject));
+      expect(same.state.status).toBe("stale");
+      expect(same.windows).toEqual(fresh.windows);
+      expect(
+        fetchMock.mock.calls.map(
+          ([, init]) =>
+            (JSON.parse(String(init?.body)) as { project: string }).project,
+        ),
+      ).toContain(otherProject);
+      expect(JSON.stringify([fresh, other, same])).not.toContain(
+        "synthetic-shared-access",
+      );
+    },
+  );
+
   it("ignores unverified Antigravity model quota aliases", async () => {
     vi.stubGlobal(
       "fetch",
@@ -885,6 +968,7 @@ describe("Antigravity provider", () => {
             `${source === "pi:google-antigravity" ? "pi:" : ""}https://daily-cloudcode-pa.googleapis.com`,
             undefined,
             "synthetic-antigravity-access",
+            "synthetic-project",
           ),
         ),
       ]);
@@ -960,6 +1044,7 @@ describe("Antigravity provider", () => {
           "https://daily-cloudcode-pa.googleapis.com",
           undefined,
           "synthetic-omp-access",
+          "omp-project",
         ),
       ),
     ]);
@@ -1003,6 +1088,7 @@ describe("Antigravity provider", () => {
           "pi:https://daily-cloudcode-pa.googleapis.com",
           undefined,
           "synthetic-pi-access",
+          "pi-project",
         ),
       ),
     ]);
@@ -2345,6 +2431,7 @@ function cachedOmpAgyQuota(): ProviderQuota {
       "https://daily-cloudcode-pa.googleapis.com",
       undefined,
       "synthetic-antigravity-access",
+      "synthetic-project",
     ),
   );
 }
