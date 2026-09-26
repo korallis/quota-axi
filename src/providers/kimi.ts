@@ -494,6 +494,23 @@ async function acquireKimiQuota(
     }
 
     const defining = definingFailure(failures);
+    if (defining.failure.definitiveAuth) {
+      // Each confirmed-missing source owns its own snapshot. The defining
+      // failure may name Pi even when a named CLI slot also signed out.
+      for (const record of failures) {
+        if (
+          record !== defining &&
+          record.failure.definitiveAuth &&
+          record.cacheContextId
+        ) {
+          try {
+            dependencies.deleteCachedProvider("kimi", record.cacheContextId);
+          } catch {
+            // The current auth verdict does not depend on cache I/O.
+          }
+        }
+      }
+    }
     return failureReport(
       defining.failure,
       defining.cacheContextId,

@@ -280,6 +280,7 @@ export async function fetchQuota(
     claudeFailureContextId(pass.failureSource, pass.cacheIdentity),
     claudeEnvOauthToken() !== undefined,
     pass.definitiveFailureIsEnvOnly,
+    pass.failureSource,
   );
 }
 
@@ -717,28 +718,6 @@ async function attemptClaudeQuota(
           state.status === "expired" &&
           state.refreshable;
         if (softRefreshable) failure = refreshableExpiryFailure();
-        if (
-          failure.definitiveAuth &&
-          credential.source !== "env" &&
-          !(
-            credential.source === "oauth-file" &&
-            credentialStates.some(
-              (candidate) =>
-                candidate.status === "skipped" &&
-                candidate.source.source === "keychain",
-            )
-          )
-        ) {
-          const contextId = claudeFailureContextId(
-            credential.source,
-            credential.cacheIdentity,
-          );
-          if (contextId) {
-            try {
-              retireCachedClaudeContext(contextId);
-            } catch {}
-          }
-        }
         attempts[attempts.length - 1] = {
           source: credential.source,
           status: "failed",
@@ -959,6 +938,7 @@ function failureReport(
   credentialContextId: string | undefined,
   envSelected: boolean,
   definitiveFailureIsEnvOnly: boolean,
+  failureSource?: ClaudeCredentials["source"],
 ): ProviderQuota {
   // The env token's own rejection describes only the env-selected session; it
   // never resolved a stored candidate, so it must not retire a cached snapshot
@@ -970,6 +950,14 @@ function failureReport(
   ) {
     try {
       retireCachedClaudeContext(credentialContextId);
+      // A stored credential can be tried after an env token fails. Its
+      // pre-existing profile snapshot has the no-env context, too.
+      if (
+        envSelected &&
+        (failureSource === "oauth-file" || failureSource === "keychain")
+      ) {
+        retireCachedClaudeContext(claudeCredentialContextId(undefined, false));
+      }
     } catch {
       // Current authentication remains definitive when cache I/O is blocked.
     }

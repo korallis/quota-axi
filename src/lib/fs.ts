@@ -60,6 +60,7 @@ export function cacheFilePath(): string {
  */
 export function claudeCredentialContextId(
   localCredentialIdentity?: string,
+  envSelected = claudeEnvOauthToken() !== undefined,
 ): string {
   const { configDir, keychainService } = claudeProfileLocations();
   // Include the exact service: it already encodes the secure-storage selector,
@@ -74,7 +75,6 @@ export function claudeCredentialContextId(
   // appended only when such a token is supplied, so every existing profile
   // keeps the identity it already cached under. It is a presence marker, never
   // any part of the token.
-  const envSelected = claudeEnvOauthToken() !== undefined;
   return createHash("sha256")
     .update(
       JSON.stringify([
