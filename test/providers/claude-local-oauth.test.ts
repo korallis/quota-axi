@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readCachedProvider, writeCachedProviders } from "../../src/cache.js";
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as {
@@ -16,6 +17,7 @@ const originalHome = process.env.HOME;
 const originalPiAgentDir = process.env.PI_CODING_AGENT_DIR;
 const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
 const originalSecureStorageDir = process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 let directories: string[] = [];
 
 afterEach(() => {
@@ -30,12 +32,175 @@ afterEach(() => {
   if (originalSecureStorageDir === undefined)
     delete process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
   else process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR = originalSecureStorageDir;
+  if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
+  else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   for (const directory of directories)
     rmSync(directory, { recursive: true, force: true });
   directories = [];
 });
 
 describe("Claude Pi and OMP OAuth quota sources", () => {
+  it.each([
+    ["omp", "pi"],
+    ["pi", "omp"],
+    ["native", "pi"],
+    ["native", "omp"],
+    ["pi", "native"],
+    ["omp", "native"],
+  ] as const)(
+    "retains a %s snapshot when a different %s credential is rejected",
+    async (cachedSource, rejectedSource) => {
+      const home = temporaryDirectory();
+      process.env.HOME = home;
+      process.env.XDG_CACHE_HOME = join(home, "cache");
+      process.env.CLAUDE_CONFIG_DIR = join(home, ".claude");
+      delete process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+      delete process.env.PI_CODING_AGENT_DIR;
+      const piFile = join(home, ".pi", "agent", "auth.json");
+      const ompFile = join(home, ".omp", "agent", "agent.db");
+      const nativeFile = join(home, ".claude", ".credentials.json");
+      const store = (source: "native" | "pi" | "omp") => {
+        if (source === "omp") {
+          writeOmpCredential(home, "anthropic", {
+            access: "synthetic-omp-access",
+            email: "omp@example.test",
+          });
+        } else if (source === "pi") {
+          mkdirSync(dirname(piFile), { recursive: true });
+          writeFileSync(
+            piFile,
+            JSON.stringify({
+              anthropic: {
+                type: "oauth",
+                access: "synthetic-pi-access",
+                accountId: "pi-account",
+              },
+            }),
+            { mode: 0o600 },
+          );
+        } else {
+          mkdirSync(dirname(nativeFile), { recursive: true });
+          writeFileSync(
+            nativeFile,
+            JSON.stringify({
+              claudeAiOauth: {
+                accessToken: "synthetic-native-access",
+                expiresAt: "2035-01-01T00:00:00.000Z",
+              },
+            }),
+            { mode: 0o600 },
+          );
+        }
+      };
+      const remove = (source: "native" | "pi" | "omp") =>
+        rmSync(
+          source === "native" ? nativeFile : source === "pi" ? piFile : ompFile,
+          { force: true },
+        );
+      store(cachedSource);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: string | URL | Request) =>
+          String(input).endsWith("/api/oauth/profile")
+            ? Response.json({ account: { uuid: "fixture-account" } })
+            : Response.json({
+                five_hour: {
+                  utilization: 27,
+                  resets_at: new Date(Date.now() + 3600_000).toISOString(),
+                },
+              }),
+        ),
+      );
+      const { fetchQuota } = await import("../../src/providers/claude.js");
+      const options = { allowKeychainPrompt: false, refreshCredentials: false };
+      const fresh = await fetchQuota(options);
+      expect(fresh.state.status).toBe("fresh");
+      writeCachedProviders([fresh]);
+      expect(readCachedProvider("claude")).toBeDefined();
+
+      remove(cachedSource);
+      store(rejectedSource);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response(null, { status: 401 })),
+      );
+      const rejected = await fetchQuota(options);
+      expect(rejected.state.status).toBe("auth_required");
+      expect(readCachedProvider("claude")).toBeDefined();
+
+      remove(rejectedSource);
+      store(cachedSource);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response(null, { status: 503 })),
+      );
+      const stale = await fetchQuota(options);
+      expect(stale.state.status).toBe("stale");
+      expect(stale.source).toBe("cache");
+      expect(stale.windows).toHaveLength(1);
+      expect(JSON.stringify([rejected, stale])).not.toMatch(
+        /synthetic-(?:native|pi|omp)-access/,
+      );
+    },
+  );
+
+  it.each(["pi", "omp"] as const)(
+    "retires a %s snapshot when its own credential is rejected",
+    async (source) => {
+      const home = temporaryDirectory();
+      process.env.HOME = home;
+      process.env.XDG_CACHE_HOME = join(home, "cache");
+      process.env.CLAUDE_CONFIG_DIR = join(home, ".claude");
+      delete process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+      delete process.env.PI_CODING_AGENT_DIR;
+      if (source === "omp") {
+        writeOmpCredential(home, "anthropic", {
+          access: "synthetic-omp-access",
+        });
+      } else {
+        const piFile = join(home, ".pi", "agent", "auth.json");
+        mkdirSync(dirname(piFile), { recursive: true });
+        writeFileSync(
+          piFile,
+          JSON.stringify({
+            anthropic: {
+              type: "oauth",
+              access: "synthetic-pi-access",
+              accountId: "pi-account",
+            },
+          }),
+          { mode: 0o600 },
+        );
+      }
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: string | URL | Request) =>
+          String(input).endsWith("/api/oauth/profile")
+            ? Response.json({ account: { uuid: "fixture-account" } })
+            : Response.json({
+                five_hour: {
+                  utilization: 27,
+                  resets_at: new Date(Date.now() + 3600_000).toISOString(),
+                },
+              }),
+        ),
+      );
+      const { fetchQuota } = await import("../../src/providers/claude.js");
+      const options = { allowKeychainPrompt: false, refreshCredentials: false };
+      const fresh = await fetchQuota(options);
+      expect(fresh.state.status).toBe("fresh");
+      writeCachedProviders([fresh]);
+      expect(readCachedProvider("claude")).toBeDefined();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response(null, { status: 401 })),
+      );
+      const rejected = await fetchQuota(options);
+      expect(rejected.state.status).toBe("auth_required");
+      expect(readCachedProvider("claude")).toBeUndefined();
+    },
+  );
+
   it("does not consult Pi or OMP when a secure-storage profile is selected", async () => {
     const home = temporaryDirectory();
     process.env.HOME = home;

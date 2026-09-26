@@ -211,7 +211,12 @@ export async function fetchQuotaWithRuntime(
     },
   ]) {
     if (!candidate.resolve) continue;
-    const resolution = await candidate.resolve();
+    let resolution: LocalOAuthResolution;
+    try {
+      resolution = await candidate.resolve();
+    } catch {
+      resolution = { status: "error" };
+    }
     if (resolution.status === "missing") continue;
     const contextId =
       resolution.status === "available" || resolution.status === "expired"
@@ -280,6 +285,14 @@ export async function fetchQuotaWithRuntime(
     if (cached?.source === "cli") finalFailure = cliFailure;
     if (cached?.source === "cli-rpc") finalFailure = loopbackFailure;
   }
+  if (
+    !isDefinitiveAuthFailure(cliFailure) &&
+    !isDefinitiveAuthFailure(loopbackFailure) &&
+    isDefinitiveAuthFailure(piFailure) &&
+    ompFailure &&
+    !isDefinitiveAuthFailure(ompFailure)
+  )
+    finalFailure = ompFailure;
   const finalError = errorMessage(finalFailure);
   if (cachedRejected) {
     try {

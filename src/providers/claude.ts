@@ -2,8 +2,8 @@ import { chmodSync, existsSync, renameSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import {
-  deleteCachedProvider,
   readCachedClaudeProvider,
+  retireCachedClaudeContext,
   stampClaudeLocalCredentialIdentity,
 } from "../cache.js";
 import {
@@ -935,9 +935,13 @@ function failureReport(
   // The env token's own rejection describes only the env-selected session; it
   // never resolved a stored candidate, so it must not retire a cached snapshot
   // that belongs to an unrelated stored-profile account.
-  if (failure.definitiveAuth && !definitiveFailureIsEnvOnly) {
+  if (
+    failure.definitiveAuth &&
+    !definitiveFailureIsEnvOnly &&
+    credentialContextId
+  ) {
     try {
-      deleteCachedProvider("claude");
+      retireCachedClaudeContext(credentialContextId);
     } catch {
       // Current authentication remains definitive when cache I/O is blocked.
     }

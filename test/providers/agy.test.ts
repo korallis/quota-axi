@@ -378,6 +378,96 @@ describe("Antigravity provider", () => {
     );
   });
 
+  it.each([
+    {
+      omp: "http_503",
+      status: "unavailable",
+      error: "Antigravity quota endpoint returned HTTP 503",
+    },
+    {
+      omp: "read_error",
+      status: "error",
+      error: "credential_resolution_failed",
+    },
+    { omp: "throw", status: "error", error: "credential_resolution_failed" },
+  ] as const)(
+    "does not report Pi sign-out while OMP is unassessed ($omp)",
+    async ({ omp, status, error }) => {
+      const pi = async () => ({
+        status: "available" as const,
+        credential: { accessToken: "pi-rejected", projectId: "pi-project" },
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          Response.json({
+            groups: [
+              {
+                buckets: [
+                  {
+                    bucketId: "gemini-5h",
+                    remainingFraction: 0.6,
+                    resetTime: new Date(Date.now() + 3600_000).toISOString(),
+                  },
+                ],
+              },
+            ],
+          }),
+        ),
+      );
+      const fresh = await fetchQuotaWithRuntime({
+        ...runtimeWith({}),
+        resolvePiAntigravity: pi,
+      });
+      writeCachedProviders([fresh]);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async (_url: unknown, init?: RequestInit) =>
+            new Response(null, {
+              status:
+                new Headers(init?.headers).get("authorization") ===
+                "Bearer pi-rejected"
+                  ? 401
+                  : 503,
+            }),
+        ),
+      );
+      const runtime = {
+        ...runtimeWith({}),
+        resolvePiAntigravity: pi,
+        resolveOmpAntigravity: async () => {
+          if (omp === "throw") throw new Error("private store path");
+          if (omp === "read_error") return { status: "error" as const };
+          return {
+            status: "available" as const,
+            credential: {
+              accessToken: "omp-unassessed",
+              projectId: "omp-project",
+            },
+          };
+        },
+      };
+      const report = await fetchQuotaWithRuntime(runtime);
+      expect(report.state).toMatchObject({ status, error });
+      expect(report.windows).toEqual([]);
+      expect(report.attempts?.slice(-2)).toMatchObject([
+        {
+          source: "pi:google-antigravity",
+          status: "failed",
+          error: "Antigravity sign-in required",
+        },
+        { source: "omp:google-antigravity", status: "failed" },
+      ]);
+      expect(readCachedProvider("agy")).toBeUndefined();
+      const noCache = await fetchQuotaWithRuntime(runtime);
+      expect(noCache.state).toMatchObject({ status, error });
+      expect(JSON.stringify([report, noCache])).not.toMatch(
+        /pi-rejected|omp-unassessed|private store path/,
+      );
+    },
+  );
+
   it("does not reuse Pi quota for another Pi credential or OMP", async () => {
     const runtime = (accessToken: string): AgyProbeRuntime => ({
       ...runtimeWith({}),
@@ -1337,6 +1427,51 @@ describe("Antigravity provider", () => {
     expect(JSON.stringify(result)).not.toContain(
       "synthetic-antigravity-access",
     );
+  });
+
+  it("keeps native rejection ahead of rejected Pi and unavailable OMP", async () => {
+    const port = await startServer((response) => {
+      response.writeHead(401);
+      response.end();
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (_url: unknown, init?: RequestInit) =>
+          new Response(null, {
+            status:
+              new Headers(init?.headers).get("authorization") ===
+              "Bearer pi-rejected"
+                ? 401
+                : 503,
+          }),
+      ),
+    );
+    const report = await fetchQuotaWithRuntime({
+      ...runtimeWith({
+        ps: "123 /Users/test/.local/bin/agy\n",
+        lsof: lsofFor(123, port),
+        requestJson: requestLoopbackJson,
+      }),
+      resolvePiAntigravity: async () => ({
+        status: "available",
+        credential: { accessToken: "pi-rejected", projectId: "pi-project" },
+      }),
+      resolveOmpAntigravity: async () => ({
+        status: "available",
+        credential: { accessToken: "omp-unassessed", projectId: "omp-project" },
+      }),
+    });
+    expect(report.state).toMatchObject({
+      status: "auth_required",
+      error: "Antigravity sign-in required",
+    });
+    expect(report.attempts?.map((attempt) => attempt.source)).toEqual([
+      "cli",
+      "loopback",
+      "pi:google-antigravity",
+      "omp:google-antigravity",
+    ]);
   });
 
   it.each([503, 429])(

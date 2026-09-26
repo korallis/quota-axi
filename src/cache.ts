@@ -779,6 +779,21 @@ export function retireCodexAccount(accountIds: readonly string[]): void {
   });
 }
 
+export function retireCachedClaudeContext(contextId: string): void {
+  if (!CREDENTIAL_CONTEXT_ID.test(contextId) || !existsSync(cacheFilePath()))
+    return;
+  withCacheWriteLock(() => {
+    const existing = readCacheProviders();
+    const remaining = existing.filter(
+      (record) =>
+        record.snapshot.provider !== "claude" ||
+        record.credentialContextId !== contextId,
+    );
+    if (remaining.length !== existing.length)
+      writeCacheFile(cacheFilePath(), remaining);
+  });
+}
+
 export function retireCachedDevinContext(contextId: string): void {
   if (!CREDENTIAL_CONTEXT_ID.test(contextId) || !existsSync(cacheFilePath()))
     return;
