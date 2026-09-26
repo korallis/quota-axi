@@ -295,7 +295,10 @@ export async function fetchQuotaWithRuntime(
     if (cached?.source === "cli-rpc") finalFailure = loopbackFailure;
     if (cached?.source === "pi:google-antigravity") finalFailure = piFailure;
     if (cached?.source === "omp:google-antigravity") finalFailure = ompFailure;
-  } else if (isDefinitiveAuthFailure(ompFailure)) {
+  } else if (
+    isDefinitiveAuthFailure(ompFailure) &&
+    !isDefinitiveAuthFailure(loopbackFailure)
+  ) {
     if (cached?.source === "cli") finalFailure = cliFailure;
     if (cached?.source === "cli-rpc") finalFailure = loopbackFailure;
   }
@@ -319,6 +322,7 @@ export async function fetchQuotaWithRuntime(
       finalFailure;
   }
   const nativeOutage =
+    !isDefinitiveAuthFailure(loopbackFailure) &&
     attempts[0].error !== AGY_CLI_NOT_INSTALLED &&
     !isDefinitiveAuthFailure(cliFailure)
       ? cliFailure
