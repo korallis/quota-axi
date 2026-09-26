@@ -89,6 +89,13 @@ export function createPiAnthropicCredentialBroker(
   return createBroker(() => resolvePiAnthropic(deps));
 }
 
+export function createPiAntigravityCredentialBroker(
+  overrides: Partial<Dependencies> = {},
+): LocalOAuthBroker {
+  const deps = dependencies(overrides);
+  return createBroker(() => resolvePiAntigravity(deps));
+}
+
 export function createOmpOAuthCredentialBroker(
   provider: OmpOAuthProvider,
   overrides: Partial<Dependencies> = {},
@@ -150,6 +157,55 @@ async function resolvePiAnthropic(
     ...(accountIdentity
       ? { cacheIdentity: `pi:anthropic:${accountIdentity}` }
       : {}),
+  };
+  if (expiresAt !== undefined && expiresAt <= deps.now()) {
+    return {
+      status: "expired",
+      credential,
+      refreshable: usableLiteralSecret(entry.refresh) !== undefined,
+    };
+  }
+  return { status: "available", credential };
+}
+
+async function resolvePiAntigravity(
+  deps: Dependencies,
+): Promise<LocalOAuthResolution> {
+  const path = resolvePiAuthFilePath(deps.environment, deps.homeDirectory);
+  let contents: Buffer;
+  try {
+    contents = await readBoundedFile(
+      path,
+      PI_AUTH_LIMIT_BYTES,
+      tracedStoreIdentity("pi-auth", path),
+    );
+  } catch (error) {
+    return errorCode(error) === "ENOENT"
+      ? { status: "missing" }
+      : { status: "error" };
+  }
+  if (contents.byteLength > PI_AUTH_LIMIT_BYTES) return { status: "invalid" };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(contents.toString("utf8")) as unknown;
+  } catch {
+    return { status: "invalid" };
+  }
+  const classified = classifyPiAuthEntry(parsed, "google-antigravity");
+  if (classified.status !== "present") return classified;
+  const { entry } = classified;
+  if (entry.type !== "oauth") return { status: "unsupported" };
+  const accessToken = usableLiteralSecret(entry.access);
+  if (!accessToken) return { status: "invalid" };
+  const expiresAt = timestampMs(entry.expires);
+  if (Object.hasOwn(entry, "expires") && expiresAt === undefined)
+    return { status: "invalid" };
+  const credential: StoredOAuthCredential = {
+    accessToken,
+    expiresAt,
+    projectId: optionalString(entry.projectId),
+    email: optionalString(entry.email),
+    accountId: optionalString(entry.accountId),
   };
   if (expiresAt !== undefined && expiresAt <= deps.now()) {
     return {

@@ -15,6 +15,7 @@ const { DatabaseSync } = require("node:sqlite") as {
 const originalHome = process.env.HOME;
 const originalPiAgentDir = process.env.PI_CODING_AGENT_DIR;
 const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+const originalSecureStorageDir = process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
 let directories: string[] = [];
 
 afterEach(() => {
@@ -26,12 +27,53 @@ afterEach(() => {
   if (originalClaudeConfigDir === undefined)
     delete process.env.CLAUDE_CONFIG_DIR;
   else process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
+  if (originalSecureStorageDir === undefined)
+    delete process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+  else process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR = originalSecureStorageDir;
   for (const directory of directories)
     rmSync(directory, { recursive: true, force: true });
   directories = [];
 });
 
 describe("Claude Pi and OMP OAuth quota sources", () => {
+  it("does not consult Pi or OMP when a secure-storage profile is selected", async () => {
+    const home = temporaryDirectory();
+    process.env.HOME = home;
+    process.env.CLAUDE_CONFIG_DIR = join(home, ".claude");
+    process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR = join(home, "selected");
+    delete process.env.PI_CODING_AGENT_DIR;
+    const agent = join(home, ".pi", "agent");
+    mkdirSync(agent, { recursive: true });
+    writeFileSync(
+      join(agent, "auth.json"),
+      JSON.stringify({
+        anthropic: {
+          type: "oauth",
+          access: "synthetic-pi-claude",
+          expires: Date.now() + 60_000,
+        },
+      }),
+      { mode: 0o600 },
+    );
+    writeOmpCredential(home, "anthropic", {
+      access: "synthetic-omp-claude",
+      expires: Date.now() + 60_000,
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchQuota } = await import("../../src/providers/claude.js");
+    const result = await fetchQuota({
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+    });
+
+    expect(result.state.status).not.toBe("fresh");
+    expect(result.state.sourcesTried).not.toContain("pi:anthropic");
+    expect(result.state.sourcesTried).not.toContain("omp:anthropic");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("keeps an expired refreshable Pi credential read-only without delegating refresh", async () => {
     const home = temporaryDirectory();
     process.env.HOME = home;

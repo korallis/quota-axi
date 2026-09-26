@@ -32,6 +32,7 @@ import type {
 } from "../types.js";
 import {
   createOmpOAuthCredentialBroker,
+  createPiAntigravityCredentialBroker,
   type LocalOAuthResolution,
 } from "./local-oauth-credential.js";
 import {
@@ -91,6 +92,8 @@ export type AgyProbeRuntime = {
     path: string,
     timeoutMs: number,
   ): Promise<unknown>;
+  resolvePiAntigravity?(): Promise<LocalOAuthResolution>;
+  inspectPiAntigravity?(): Promise<LocalOAuthResolution["status"]>;
   resolveOmpAntigravity?(): Promise<LocalOAuthResolution>;
   inspectOmpAntigravity?(): Promise<LocalOAuthResolution["status"]>;
 };
@@ -127,7 +130,9 @@ export async function fetchQuotaWithRuntime(
   let finalFailure: unknown;
   let cliFailure: unknown;
   let loopbackFailure: unknown;
+  let piFailure: unknown;
   let ompFailure: unknown;
+  let piContextId: string | undefined;
   let ompContextId: string | undefined;
 
   try {
@@ -191,57 +196,71 @@ export async function fetchQuotaWithRuntime(
     };
   }
 
-  if (runtime.resolveOmpAntigravity) {
-    const resolution = await runtime.resolveOmpAntigravity();
-    if (resolution.status !== "missing") {
+  for (const candidate of [
+    {
+      source: "pi:google-antigravity" as const,
+      resolve: runtime.resolvePiAntigravity,
+      read: fetchPiAntigravityQuota,
+      origin: `pi:${OMP_ANTIGRAVITY_BASE_URL}`,
+    },
+    {
+      source: "omp:google-antigravity" as const,
+      resolve: runtime.resolveOmpAntigravity,
+      read: fetchOmpAntigravityQuota,
+      origin: OMP_ANTIGRAVITY_BASE_URL,
+    },
+  ]) {
+    if (!candidate.resolve) continue;
+    const resolution = await candidate.resolve();
+    if (resolution.status === "missing") continue;
+    const contextId =
+      resolution.status === "available" || resolution.status === "expired"
+        ? agyOmpCredentialContextId(
+            candidate.origin,
+            resolution.credential.cacheIdentity,
+            resolution.credential.accessToken,
+          )
+        : undefined;
+    if (candidate.source === "pi:google-antigravity") piContextId = contextId;
+    else ompContextId = contextId;
+    attempts.push({ source: candidate.source, status: "failed" });
+    try {
+      const quota = await candidate.read(resolution);
+      attempts[attempts.length - 1] = {
+        source: candidate.source,
+        status: "success",
+      };
+      return stampAgyOmpCredentialContextId(
+        successProvider({
+          provider: "agy",
+          label: "Antigravity",
+          source: candidate.source,
+          account: quota.account,
+          windows: quota.windows,
+          refreshedAt: quota.refreshedAt,
+          sourcesTried: sourceNames(attempts),
+          attempts,
+        }),
+        contextId,
+      );
+    } catch (error) {
+      if (candidate.source === "pi:google-antigravity") piFailure = error;
+      else ompFailure = error;
       if (
-        resolution.status === "available" ||
-        resolution.status === "expired"
-      ) {
-        ompContextId = agyOmpCredentialContextId(
-          OMP_ANTIGRAVITY_BASE_URL,
-          resolution.credential.cacheIdentity,
-          resolution.credential.accessToken,
-        );
-      }
-      attempts.push({ source: "omp:google-antigravity", status: "failed" });
-      try {
-        const quota = await fetchOmpAntigravityQuota(resolution);
-        attempts[attempts.length - 1] = {
-          source: "omp:google-antigravity",
-          status: "success",
-        };
-        return stampAgyOmpCredentialContextId(
-          successProvider({
-            provider: "agy",
-            label: "Antigravity",
-            source: "omp:google-antigravity",
-            account: quota.account,
-            windows: quota.windows,
-            refreshedAt: quota.refreshedAt,
-            sourcesTried: sourceNames(attempts),
-            attempts,
-          }),
-          ompContextId,
-        );
-      } catch (error) {
-        const message = errorMessage(error);
-        ompFailure = error;
-        if (
-          !isDefinitiveAuthFailure(finalFailure) ||
-          isDefinitiveAuthFailure(error)
-        )
-          finalFailure = error;
-        attempts[attempts.length - 1] = {
-          source: "omp:google-antigravity",
-          status: "failed",
-          error: message,
-        };
-      }
+        !isDefinitiveAuthFailure(finalFailure) ||
+        isDefinitiveAuthFailure(error)
+      )
+        finalFailure = error;
+      attempts[attempts.length - 1] = {
+        source: candidate.source,
+        status: "failed",
+        error: errorMessage(error),
+      };
     }
   }
 
-  const cached = readCachedAgyProvider(ompContextId);
+  const cached =
+    readCachedAgyProvider(piContextId) ?? readCachedAgyProvider(ompContextId);
   const cachedAttemptSource =
     cached?.source === "cli-rpc" ? "loopback" : cached?.source;
   const cachedRejected =
@@ -255,10 +274,9 @@ export async function fetchQuotaWithRuntime(
   if (cachedRejected) {
     if (cached?.source === "cli") finalFailure = cliFailure;
     if (cached?.source === "cli-rpc") finalFailure = loopbackFailure;
-  } else if (
-    isDefinitiveAuthFailure(ompFailure) &&
-    attempts.at(-1)?.source === "omp:google-antigravity"
-  ) {
+    if (cached?.source === "pi:google-antigravity") finalFailure = piFailure;
+    if (cached?.source === "omp:google-antigravity") finalFailure = ompFailure;
+  } else if (isDefinitiveAuthFailure(ompFailure)) {
     if (cached?.source === "cli") finalFailure = cliFailure;
     if (cached?.source === "cli-rpc") finalFailure = loopbackFailure;
   }
@@ -310,6 +328,14 @@ export async function inspectAuthWithRuntime(
       source: "loopback",
       status: "error",
       error: errorMessage(error),
+    });
+  }
+  if (runtime.inspectPiAntigravity) {
+    const status = await runtime.inspectPiAntigravity();
+    sources.push({
+      source: "pi:google-antigravity",
+      status: status === "unsupported" ? "invalid" : status,
+      ...(status === "expired" ? { error: "credentials_expired" } : {}),
     });
   }
   if (runtime.inspectOmpAntigravity) {
@@ -1346,6 +1372,36 @@ const OMP_ANTIGRAVITY_TIMEOUT_MS = 15_000;
 const OMP_ANTIGRAVITY_QUOTA_PATH = "/v1internal:retrieveUserQuotaSummary";
 const OMP_ANTIGRAVITY_MODELS_PATH = "/v1internal:fetchAvailableModels";
 
+async function fetchPiAntigravityQuota(
+  resolution: LocalOAuthResolution,
+): Promise<{
+  account?: ProviderQuota["account"];
+  windows: QuotaWindow[];
+  refreshedAt: string;
+}> {
+  if (resolution.status === "missing") throw new Error("credentials_missing");
+  if (resolution.status !== "available" && resolution.status !== "expired") {
+    throw new Error(
+      resolution.status === "unsupported"
+        ? "unsupported_credential_type"
+        : resolution.status === "invalid"
+          ? "credentials_invalid"
+          : "credential_resolution_failed",
+    );
+  }
+  const { accessToken, projectId, email } = resolution.credential;
+  if (!projectId) throw new Error("antigravity_project_id_missing");
+  const summary = await requestOmpAntigravityJson(
+    `${OMP_ANTIGRAVITY_BASE_URL}${OMP_ANTIGRAVITY_QUOTA_PATH}`,
+    accessToken,
+    projectId,
+  );
+  const normalized = normalizeAgyQuotaSummary(summary);
+  if (!normalized || normalized.windows.length === 0)
+    throw new AgyMalformedResponseError("Antigravity quota summary malformed");
+  return { ...normalized, ...(email ? { account: { email } } : {}) };
+}
+
 async function fetchOmpAntigravityQuota(
   resolution: LocalOAuthResolution,
 ): Promise<{
@@ -1485,35 +1541,22 @@ function normalizeOmpAntigravityModels(raw: unknown): QuotaWindow[] {
   const windows: QuotaWindow[] = [];
   for (const [modelId, rawModel] of Object.entries(models)) {
     const model = objectValue(rawModel);
-    if (!model) continue;
-    const entries: unknown[] = [];
-    for (const key of [
-      "quotaInfo",
-      "quotaInfos",
-      "dailyQuotaInfo",
-      "dailyQuotaInfos",
-      "weeklyQuotaInfo",
-      "weeklyQuotaInfos",
-    ]) {
-      const value = model[key];
-      if (Array.isArray(value)) entries.push(...value);
-      else if (value !== undefined) entries.push(value);
-    }
-    for (const entry of entries) {
-      const quotaInfo = objectValue(entry);
-      if (!quotaInfo) continue;
-      const normalized = normalizeModelConfigWindow({
-        label: stringValue(model.displayName) ?? modelId,
-        modelOrAlias: { model: modelId },
-        quotaInfo,
-      });
-      if (normalized) windows.push(normalized);
-    }
+    const quotaInfo = objectValue(model?.quotaInfo);
+    if (!quotaInfo) continue;
+    const normalized = normalizeModelConfigWindow({
+      label: stringValue(model?.displayName) ?? modelId,
+      modelOrAlias: { model: modelId },
+      quotaInfo,
+    });
+    if (normalized) windows.push(normalized);
   }
   return windows.sort(compareAgyWindows);
 }
 
 const defaultRuntime: AgyProbeRuntime = {
+  resolvePiAntigravity: () => createPiAntigravityCredentialBroker().resolve(),
+  inspectPiAntigravity: async () =>
+    (await createPiAntigravityCredentialBroker().resolve()).status,
   resolveOmpAntigravity: () =>
     createOmpOAuthCredentialBroker("google-antigravity").resolve(),
   inspectOmpAntigravity: async () =>

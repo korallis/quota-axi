@@ -42,6 +42,7 @@ export type ProviderSource =
   | "pi:openai-codex"
   | "pi:anthropic"
   | "omp:anthropic"
+  | "pi:google-antigravity"
   | "omp:google-antigravity"
   | "omp:openai-codex"
   | "omp:kimi-code"

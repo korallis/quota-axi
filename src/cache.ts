@@ -32,6 +32,7 @@ const PROVIDER_SOURCES = [
   "pi:openai-codex",
   "pi:anthropic",
   "omp:anthropic",
+  "pi:google-antigravity",
   "omp:google-antigravity",
   "cli-rpc",
   "omp:openai-codex",
@@ -163,7 +164,8 @@ export function stampAgyOmpCredentialContextId(
 }
 
 function agyOmpStampContextId(provider: ProviderQuota): string | undefined {
-  return provider.source === "omp:google-antigravity"
+  return provider.source === "omp:google-antigravity" ||
+    provider.source === "pi:google-antigravity"
     ? (provider as AgyOmpStampedQuota)[AGY_OMP_CREDENTIAL_CONTEXT_ID]
     : undefined;
 }
@@ -588,7 +590,8 @@ export function readCachedAgyProvider(
   const record = readCachedRecord("agy");
   if (!record) return undefined;
   if (
-    record.snapshot.source === "omp:google-antigravity" &&
+    (record.snapshot.source === "omp:google-antigravity" ||
+      record.snapshot.source === "pi:google-antigravity") &&
     (!contextId || record.credentialContextId !== contextId)
   )
     return undefined;
@@ -902,7 +905,8 @@ function toCacheProvider(provider: ProviderQuota): CachedProvider | undefined {
     CONTEXT_SCOPED_PROVIDERS[provider.provider] !== undefined &&
     !(
       provider.provider === "agy" &&
-      provider.source !== "omp:google-antigravity"
+      provider.source !== "omp:google-antigravity" &&
+      provider.source !== "pi:google-antigravity"
     );
   if (requiresContext && !contextId) return undefined;
   return {
@@ -915,7 +919,8 @@ function missingRequiredContext(provider: ProviderQuota): boolean {
   if (provider.provider === "codex") return false;
   if (
     provider.provider === "agy" &&
-    provider.source !== "omp:google-antigravity"
+    provider.source !== "omp:google-antigravity" &&
+    provider.source !== "pi:google-antigravity"
   )
     return false;
   const scope = CONTEXT_SCOPED_PROVIDERS[provider.provider];

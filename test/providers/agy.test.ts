@@ -41,10 +41,12 @@ import {
   type AgyProbeRuntime,
 } from "../../src/providers/agy.js";
 import { withQuotaSemantics } from "../../src/interpretation.js";
+import { createPiAntigravityCredentialBroker } from "../../src/providers/local-oauth-credential.js";
 import type { ProviderQuota } from "../../src/types.js";
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalPath = process.env.PATH;
+const originalPiAgentDir = process.env.PI_CODING_AGENT_DIR;
 const originalWorkingDirectory = process.cwd();
 let tempDir: string | undefined;
 const servers: ReturnType<typeof createServer>[] = [];
@@ -66,6 +68,8 @@ afterEach(async () => {
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   if (originalPath === undefined) delete process.env.PATH;
   else process.env.PATH = originalPath;
+  if (originalPiAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = originalPiAgentDir;
   process.chdir(originalWorkingDirectory);
   if (tempDir) rmSync(tempDir, { recursive: true, force: true });
   tempDir = undefined;
@@ -257,6 +261,191 @@ agy 101 test 9u IPv4 0x2 0t0 TCP 127.0.0.1:64441 (LISTEN)
 });
 
 describe("Antigravity provider", () => {
+  it("reads Pi OAuth quota after native failure and before OMP without refresh", async () => {
+    const agent = join(tempDir!, "pi-agent");
+    process.env.PI_CODING_AGENT_DIR = agent;
+    mkdirSync(agent, { recursive: true });
+    writeFileSync(
+      join(agent, "auth.json"),
+      JSON.stringify({
+        "google-antigravity": {
+          type: "oauth",
+          access: "synthetic-pi-antigravity-access",
+          refresh: "synthetic-pi-refresh-not-used",
+          expires: Date.now() - 1_000,
+          projectId: "pi-project",
+        },
+      }),
+      { mode: 0o600 },
+    );
+    const fetchMock = vi.fn(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        expect(String(input)).toBe(
+          "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+        );
+        expect(new Headers(init?.headers).get("authorization")).toBe(
+          "Bearer synthetic-pi-antigravity-access",
+        );
+        expect(JSON.parse(String(init?.body))).toEqual({
+          project: "pi-project",
+        });
+        return Response.json({
+          groups: [
+            { buckets: [{ bucketId: "gemini-5h", remainingFraction: 0.73 }] },
+          ],
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const broker = createPiAntigravityCredentialBroker();
+    const omp = vi.fn(async () => ({ status: "missing" as const }));
+    const runtime = {
+      ...runtimeWith({}),
+      resolvePiAntigravity: () => broker.resolve(),
+      inspectPiAntigravity: async () => (await broker.inspect()).status,
+      resolveOmpAntigravity: omp,
+    };
+    const auth = await inspectAuthWithRuntime(runtime);
+    const result = await fetchQuotaWithRuntime(runtime);
+    expect(auth.sources.at(-1)).toMatchObject({
+      source: "pi:google-antigravity",
+      status: "expired",
+    });
+    expect(result.source).toBe("pi:google-antigravity");
+    expect(result.windows).toMatchObject([
+      { id: "gemini_5h", percentRemaining: 73 },
+    ]);
+    expect(result.attempts?.map((attempt) => attempt.source)).toEqual([
+      "cli",
+      "loopback",
+      "pi:google-antigravity",
+    ]);
+    expect(omp).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(JSON.stringify(result)).not.toMatch(
+      /synthetic-pi-antigravity-access|synthetic-pi-refresh-not-used/,
+    );
+    writeCachedProviders([result]);
+    expect(readCachedProvider("agy")?.source).toBe("pi:google-antigravity");
+  });
+
+  it("does not resolve Pi after native quota succeeds", async () => {
+    const pi = vi.fn(async () => ({ status: "missing" as const }));
+    const result = await fetchQuotaWithRuntime({
+      ...runtimeWith({ cliQuota: JSON.stringify(fixture("cli-quota.json")) }),
+      resolvePiAntigravity: pi,
+    });
+    expect(result.source).toBe("cli");
+    expect(pi).not.toHaveBeenCalled();
+  });
+
+  it("tries OMP after a failed Pi quota read without sending Pi to model endpoints", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        urls.push(String(input));
+        const token = new Headers(init?.headers).get("authorization");
+        if (token === "Bearer pi-access")
+          return new Response(null, { status: 401 });
+        return Response.json({
+          groups: [
+            { buckets: [{ bucketId: "gemini-5h", remainingFraction: 0.55 }] },
+          ],
+        });
+      }),
+    );
+    const result = await fetchQuotaWithRuntime({
+      ...runtimeWith({}),
+      resolvePiAntigravity: async () => ({
+        status: "available",
+        credential: { accessToken: "pi-access", projectId: "pi-project" },
+      }),
+      resolveOmpAntigravity: async () => ({
+        status: "available",
+        credential: { accessToken: "omp-access", projectId: "omp-project" },
+      }),
+    });
+    expect(result.source).toBe("omp:google-antigravity");
+    expect(result.attempts?.slice(-2)).toMatchObject([
+      { source: "pi:google-antigravity", status: "failed" },
+      { source: "omp:google-antigravity", status: "success" },
+    ]);
+    expect(urls).toEqual(
+      Array(2).fill(
+        "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+      ),
+    );
+  });
+
+  it("does not reuse Pi quota for another Pi credential or OMP", async () => {
+    const runtime = (accessToken: string): AgyProbeRuntime => ({
+      ...runtimeWith({}),
+      resolvePiAntigravity: async () => ({
+        status: "available",
+        credential: { accessToken, projectId: "pi-project" },
+      }),
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          groups: [
+            {
+              buckets: [
+                {
+                  bucketId: "gemini-5h",
+                  remainingFraction: 0.6,
+                  resetTime: new Date(Date.now() + 3600_000).toISOString(),
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    const fresh = await fetchQuotaWithRuntime(runtime("pi-access"));
+    writeCachedProviders([fresh]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 503 })),
+    );
+    const same = await fetchQuotaWithRuntime(runtime("pi-access"));
+    const other = await fetchQuotaWithRuntime(runtime("other-pi-access"));
+    expect(same.state.status).toBe("stale");
+    expect(other.state.status).not.toBe("stale");
+    expect(readCachedProvider("agy")?.source).toBe("pi:google-antigravity");
+  });
+
+  it("ignores unverified Antigravity model quota aliases", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) =>
+        Response.json(
+          String(input).endsWith("retrieveUserQuotaSummary")
+            ? { groups: [] }
+            : {
+                models: {
+                  gemini: { quotaInfos: [{ remainingFraction: 0.25 }] },
+                },
+              },
+        ),
+      ),
+    );
+    const result = await fetchQuotaWithRuntime({
+      ...runtimeWith({}),
+      resolveOmpAntigravity: async () => ({
+        status: "available",
+        credential: {
+          accessToken: "synthetic-antigravity-access",
+          projectId: "synthetic-project",
+        },
+      }),
+    });
+    expect(result.state.status).not.toBe("fresh");
+    expect(result.windows).toEqual([]);
+  });
+
   it("uses OMP Google OAuth with the verified Cloud Code quota summary endpoint", async () => {
     const fetchMock = vi.fn(
       async (input: string | URL | Request, init?: RequestInit) => {
