@@ -41,6 +41,171 @@ afterEach(() => {
 
 describe("Claude Pi and OMP OAuth quota sources", () => {
   it.each([
+    ["native", "pi"],
+    ["native", "omp"],
+    ["pi", "omp"],
+  ] as const)(
+    "retires rejected %s quota before a later %s transient verdict",
+    async (first, second) => {
+      const home = temporaryDirectory();
+      process.env.HOME = home;
+      process.env.XDG_CACHE_HOME = join(home, "cache");
+      process.env.CLAUDE_CONFIG_DIR = join(home, ".claude");
+      delete process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+      delete process.env.PI_CODING_AGENT_DIR;
+      const piFile = join(home, ".pi", "agent", "auth.json");
+      const ompFile = join(home, ".omp", "agent", "agent.db");
+      const store = (source: "native" | "pi" | "omp") => {
+        if (source === "native") {
+          mkdirSync(process.env.CLAUDE_CONFIG_DIR!, { recursive: true });
+          writeFileSync(
+            join(process.env.CLAUDE_CONFIG_DIR!, ".credentials.json"),
+            JSON.stringify({
+              claudeAiOauth: {
+                accessToken: "synthetic-native-access",
+                expiresAt: "2035-01-01T00:00:00.000Z",
+              },
+            }),
+            { mode: 0o600 },
+          );
+        } else if (source === "pi") {
+          mkdirSync(dirname(piFile), { recursive: true });
+          writeFileSync(
+            piFile,
+            JSON.stringify({
+              anthropic: {
+                type: "oauth",
+                access: "synthetic-pi-access",
+                accountId: "pi-account",
+              },
+            }),
+            { mode: 0o600 },
+          );
+        } else {
+          writeOmpCredential(home, "anthropic", {
+            access: "synthetic-omp-access",
+          });
+        }
+      };
+      store(first);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: string | URL | Request) =>
+          String(input).endsWith("/api/oauth/profile")
+            ? Response.json({ account: { uuid: "fixture-account" } })
+            : Response.json({
+                five_hour: {
+                  utilization: 27,
+                  resets_at: new Date(Date.now() + 3600_000).toISOString(),
+                },
+              }),
+        ),
+      );
+      const { fetchQuota } = await import("../../src/providers/claude.js");
+      const options = { allowKeychainPrompt: false, refreshCredentials: false };
+      const fresh = await fetchQuota(options);
+      expect(fresh.state.status).toBe("fresh");
+      writeCachedProviders([fresh]);
+      expect(readCachedProvider("claude")).toBeDefined();
+
+      store(second);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_input: unknown, init?: RequestInit) => {
+          const bearer = new Headers(init?.headers).get("authorization");
+          return new Response(null, {
+            status: bearer === `Bearer synthetic-${first}-access` ? 401 : 503,
+          });
+        }),
+      );
+      const report = await fetchQuota(options);
+      expect(report.state.status).not.toBe("auth_required");
+      expect(report.attempts).toContainEqual(
+        expect.objectContaining({
+          source: first === "native" ? "oauth-file" : "pi:anthropic",
+          status: "failed",
+        }),
+      );
+      expect(report.attempts).toContainEqual(
+        expect.objectContaining({
+          source: second === "pi" ? "pi:anthropic" : "omp:anthropic",
+          status: "failed",
+        }),
+      );
+      expect(readCachedProvider("claude")).toBeUndefined();
+
+      rmSync(second === "pi" ? piFile : ompFile, { force: true });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response(null, { status: 503 })),
+      );
+      const later = await fetchQuota(options);
+      expect(later.state.status).not.toBe("stale");
+      expect(later.windows).toEqual([]);
+      expect(readCachedProvider("claude")).toBeUndefined();
+      expect(JSON.stringify([report, later])).not.toMatch(
+        /synthetic-(?:native|pi|omp)-access/,
+      );
+    },
+  );
+
+  it("preserves OMP quota when Pi is rejected before an OMP transient", async () => {
+    const home = temporaryDirectory();
+    process.env.HOME = home;
+    process.env.XDG_CACHE_HOME = join(home, "cache");
+    process.env.CLAUDE_CONFIG_DIR = join(home, ".claude");
+    delete process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+    delete process.env.PI_CODING_AGENT_DIR;
+    writeOmpCredential(home, "anthropic", { access: "synthetic-omp-access" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) =>
+        String(input).endsWith("/api/oauth/profile")
+          ? Response.json({ account: { uuid: "fixture-account" } })
+          : Response.json({
+              five_hour: {
+                utilization: 27,
+                resets_at: new Date(Date.now() + 3600_000).toISOString(),
+              },
+            }),
+      ),
+    );
+    const { fetchQuota } = await import("../../src/providers/claude.js");
+    const options = { allowKeychainPrompt: false, refreshCredentials: false };
+    writeCachedProviders([await fetchQuota(options)]);
+    const piFile = join(home, ".pi", "agent", "auth.json");
+    mkdirSync(dirname(piFile), { recursive: true });
+    writeFileSync(
+      piFile,
+      JSON.stringify({
+        anthropic: {
+          type: "oauth",
+          access: "synthetic-pi-access",
+          accountId: "pi-account",
+        },
+      }),
+      { mode: 0o600 },
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (_input: unknown, init?: RequestInit) =>
+          new Response(null, {
+            status:
+              new Headers(init?.headers).get("authorization") ===
+              "Bearer synthetic-pi-access"
+                ? 401
+                : 503,
+          }),
+      ),
+    );
+    const report = await fetchQuota(options);
+    expect(report.source).toBe("cache");
+    expect(report.state.status).toBe("stale");
+    expect(readCachedProvider("claude")?.source).toBe("omp:anthropic");
+  });
+
+  it.each([
     ["omp", "pi"],
     ["pi", "omp"],
     ["native", "pi"],

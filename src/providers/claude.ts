@@ -277,15 +277,21 @@ export async function fetchQuota(
   return failureReport(
     pass.failure,
     attempts,
-    pass.failureSource === "pi:anthropic" ||
-      pass.failureSource === "omp:anthropic"
-      ? pass.cacheIdentity
-        ? claudeCredentialContextId(pass.cacheIdentity)
-        : undefined
-      : claudeCredentialContextId(),
+    claudeFailureContextId(pass.failureSource, pass.cacheIdentity),
     claudeEnvOauthToken() !== undefined,
     pass.definitiveFailureIsEnvOnly,
   );
+}
+
+function claudeFailureContextId(
+  source: ClaudeCredentials["source"] | undefined,
+  cacheIdentity: string | undefined,
+): string | undefined {
+  return source === "pi:anthropic" || source === "omp:anthropic"
+    ? cacheIdentity
+      ? claudeCredentialContextId(cacheIdentity)
+      : undefined
+    : claudeCredentialContextId();
 }
 
 function isProfileOnly(options: ProviderOptions): boolean {
@@ -711,6 +717,28 @@ async function attemptClaudeQuota(
           state.status === "expired" &&
           state.refreshable;
         if (softRefreshable) failure = refreshableExpiryFailure();
+        if (
+          failure.definitiveAuth &&
+          credential.source !== "env" &&
+          !(
+            credential.source === "oauth-file" &&
+            credentialStates.some(
+              (candidate) =>
+                candidate.status === "skipped" &&
+                candidate.source.source === "keychain",
+            )
+          )
+        ) {
+          const contextId = claudeFailureContextId(
+            credential.source,
+            credential.cacheIdentity,
+          );
+          if (contextId) {
+            try {
+              retireCachedClaudeContext(contextId);
+            } catch {}
+          }
+        }
         attempts[attempts.length - 1] = {
           source: credential.source,
           status: "failed",
