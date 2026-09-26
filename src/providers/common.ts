@@ -6,6 +6,7 @@ import type {
   SourceAttempt,
 } from "../types.js";
 import { isDegradedSourceAttempt } from "../lib/source-attempts.js";
+import { servableCachedSnapshot } from "../cache.js";
 import { percentRemaining } from "../lib/time.js";
 
 export function withRemaining(
@@ -189,9 +190,10 @@ export function staleUnlessSignOut(
 
 /**
  * Serve a cached snapshot as a stale reading of the current failure, keeping
- * only the windows {@link servableStaleWindows} still allows. Returns
- * `undefined` when none survive, so the caller reports the failed read exactly
- * as it would with no cache at all.
+ * only the windows {@link servableStaleWindows} still allows. A Devin snapshot
+ * can survive without windows when it still carries usable credits. Otherwise
+ * returns `undefined` when no window survives, so the caller reports the
+ * failed read exactly as it would with no cache at all.
  */
 export function staleFromCache(
   cached: ProviderQuota,
@@ -201,7 +203,18 @@ export function staleFromCache(
   now: number = Date.now(),
 ): ProviderQuota | undefined {
   const windows = servableStaleWindows(cached, now);
-  if (windows.length === 0) return undefined;
+  const servable = servableCachedSnapshot(cached, now, false);
+  const credits = servable.credits;
+  if (
+    windows.length === 0 &&
+    !(
+      cached.provider === "devin" &&
+      (credits?.remaining !== undefined ||
+        credits?.unlimited === true ||
+        credits?.buckets?.length)
+    )
+  )
+    return undefined;
   const state: ProviderQuota["state"] = {
     ...cached.state,
     status: "stale",
@@ -212,7 +225,7 @@ export function staleFromCache(
   const untrustedWindowIds = servableUntrustedWindowIds(cached, windows);
   if (untrustedWindowIds) state.untrustedWindowIds = untrustedWindowIds;
   else delete state.untrustedWindowIds;
-  return { ...cached, source: "cache", windows, state, attempts };
+  return { ...servable, source: "cache", windows, state, attempts };
 }
 
 export function statusFromError(error: string): ProviderStatus {

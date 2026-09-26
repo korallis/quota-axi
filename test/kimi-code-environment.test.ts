@@ -274,6 +274,7 @@ key = "oauth/kimi-code"
               status: "skipped",
               error: "kimi_code_cli_credential_storage_unsupported",
             },
+            { source: "omp:kimi-code", status: "missing" },
           ],
         },
       ],
@@ -309,6 +310,7 @@ oauth_host = "https://auth.kimi.ai"
           sources: [
             { source: "pi:kimi-coding", status: "missing" },
             { source: "kimi-code-cli", status: "missing" },
+            { source: "omp:kimi-code", status: "missing" },
           ],
         },
       ],
@@ -744,6 +746,7 @@ key = "oauth/../../escaped"
               status: "skipped",
               error: "kimi_code_cli_config_invalid",
             },
+            { source: "omp:kimi-code", status: "missing" },
           ],
         },
       ],

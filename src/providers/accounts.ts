@@ -77,7 +77,8 @@ export async function fetchAccountQuotas(
       report.accountKeys,
     );
   }
-  return readings.map(({ report }) => report);
+  const reports = readings.map(({ report }) => report);
+  return (await adapter.afterAccountQuotas?.(reports)) ?? reports;
 }
 
 /**

@@ -38,6 +38,10 @@ import {
   type PiXaiCredentialBroker,
   type PiXaiCredentialResolution,
 } from "./pi-xai-credential.js";
+import {
+  createOmpOAuthCredentialBroker,
+  type LocalOAuthBroker,
+} from "./local-oauth-credential.js";
 import { withUsageFetchFailure } from "./usage-fetch-failure.js";
 
 const CONSUMER_QUOTA_URL =
@@ -59,7 +63,6 @@ const GROK_PI_CREDENTIAL_RESOLUTION_ERROR =
 const MODEL_AUTH_ONLY_ERROR = "model_auth_only";
 const MODEL_AUTH_PROBE_LIVE = "model_auth_probe_live";
 const PI_QUOTA_NOT_NEEDED_ERROR = "quota_not_needed";
-
 const PRODUCT_NAMES: Record<number, { id: string; label: string }> = {
   0: { id: "unspecified", label: "Other" },
   1: { id: "api", label: "API" },
@@ -147,10 +150,12 @@ type ProtoField = VarintField | ByteField;
 
 type GrokDependencies = {
   piXaiBroker: PiXaiCredentialBroker;
+  ompBroker: LocalOAuthBroker;
 };
 
 const defaultGrokDependencies: GrokDependencies = {
   piXaiBroker: createPiXaiCredentialBroker(),
+  ompBroker: createOmpOAuthCredentialBroker("xai-oauth"),
 };
 
 export function createGrokAdapter(
@@ -287,14 +292,105 @@ async function fetchQuotaWithDependencies(
     selection,
     refreshAttempt,
   );
-  const transientError = selection.transientError;
-  const retryAfter = selection.retryAfter;
   const cliRefreshNeeded = selection.results.some(
     (result) =>
       result.source === GROK_SOURCE &&
       result.refreshable === true &&
       result.outcome === "rejected",
   );
+  let ompRefreshableExpiredRejected = false;
+  let ompModelLive = false;
+  let ompTransientError: string | undefined;
+  let ompRetryAfter: string | undefined;
+  if (
+    selection.outcome !== "quota" &&
+    selection.outcome !== "transient" &&
+    selection.transientError === undefined
+  ) {
+    let resolution;
+    try {
+      resolution = await dependencies.ompBroker.resolve();
+    } catch {
+      resolution = { status: "error" as const };
+    }
+    if (resolution.status === "available" || resolution.status === "expired") {
+      try {
+        const quota = await fetchGrokConsumerQuota({
+          key: resolution.credential.accessToken,
+          email: resolution.credential.email,
+        });
+        attempts.push({ source: "omp:xai-oauth", status: "success" });
+        return withAuthStatus(
+          successProvider({
+            provider: "grok",
+            label: "Grok",
+            source: "omp:xai-oauth",
+            account: quota.account,
+            windows: quota.windows,
+            credits: quota.credits,
+            refreshedAt: quota.refreshedAt,
+            sourcesTried: sourceNames(attempts),
+            attempts,
+          }),
+          "usable",
+          cliRefreshNeeded,
+        );
+      } catch (error) {
+        const errorText = errorMessage(error);
+        const definitive = isDefinitiveGrokAuthError(errorText);
+        const probe = definitive
+          ? await probeGrokModelAccess(
+              XAI_MODELS_URL,
+              resolution.credential.accessToken,
+            )
+          : undefined;
+        if (probe?.kind === "live_no_quota") {
+          ompModelLive = true;
+          attempts.push({
+            source: "omp:xai-oauth",
+            status: "skipped",
+            error: MODEL_AUTH_PROBE_LIVE,
+            credentialPresent: true,
+            degraded: false,
+          });
+        } else {
+          const failureText =
+            probe?.kind === "transient" || probe?.kind === "rejected"
+              ? probe.error
+              : errorText;
+          ompRefreshableExpiredRejected =
+            probe?.kind === "rejected" &&
+            resolution.status === "expired" &&
+            resolution.refreshable;
+          if (probe?.kind === "transient" || !definitive) {
+            ompTransientError = failureText;
+            if (probe?.kind === "transient") ompRetryAfter = probe.retryAfter;
+            else if (error instanceof RateLimitError)
+              ompRetryAfter = error.retryAfter;
+          }
+          attempts.push({
+            source: "omp:xai-oauth",
+            status: "failed",
+            error: failureText,
+            credentialPresent: true,
+          });
+        }
+      }
+    } else if (resolution.status !== "missing") {
+      attempts.push({
+        source: "omp:xai-oauth",
+        status: "failed",
+        error: `credentials_${resolution.status}`,
+        credentialPresent: true,
+      });
+      if (resolution.status === "error") {
+        ompTransientError = "OMP xAI credential resolution failed";
+      }
+    }
+  }
+
+  const transientError = selection.transientError ?? ompTransientError;
+  const retryAfter = selection.retryAfter ?? ompRetryAfter;
 
   if (selection.outcome === "quota" && selection.result) {
     const quota = selection.result;
@@ -315,10 +411,19 @@ async function fetchQuotaWithDependencies(
     );
   }
 
+  const localAuthStatus = classifyGrokAuthStatus(
+    cliState,
+    piResolution,
+    selection,
+  );
   const authStatus =
-    selection.outcome === "live_no_quota"
+    localAuthStatus === "usable" || ompModelLive
       ? "usable"
-      : classifyGrokAuthStatus(cliState, piResolution, selection);
+      : ompTransientError !== undefined && localAuthStatus === "unusable"
+        ? undefined
+        : ompRefreshableExpiredRejected
+          ? "expired_refreshable"
+          : localAuthStatus;
 
   if (authStatus === "usable" || transientError !== undefined) {
     // Valid model auth (CLI and/or Pi) without consumer windows is not logout.
@@ -350,7 +455,7 @@ async function fetchQuotaWithDependencies(
             : "unavailable",
         error:
           transientError ??
-          (selection.outcome === "live_no_quota"
+          (selection.outcome === "live_no_quota" || ompModelLive
             ? GROK_MODEL_AUTH_WITHOUT_QUOTA_ERROR
             : GROK_CONSUMER_QUOTA_UNAVAILABLE_ERROR),
         retryAfter,
@@ -366,7 +471,9 @@ async function fetchQuotaWithDependencies(
   if (authStatus === "expired_refreshable") {
     finalError = hasRefreshableCliCandidate(cliState)
       ? GROK_ACCESS_TOKEN_EXPIRED_ERROR
-      : "Pi xAI access token expired";
+      : localAuthStatus === "expired_refreshable"
+        ? "Pi xAI access token expired"
+        : "OMP xAI access token expired";
   } else if (piResolution.status === "error") {
     finalError = GROK_PI_CREDENTIAL_RESOLUTION_ERROR;
   } else {
@@ -392,7 +499,7 @@ async function fetchQuotaWithDependencies(
       label: "Grok",
       status: retryAfter
         ? "rate_limited"
-        : grokStatusForAuthFailure(finalError, authStatus),
+        : grokStatusForAuthFailure(finalError, authStatus ?? "unusable"),
       error: finalError,
       retryAfter,
       sourcesTried: sourceNames(attempts),
@@ -716,6 +823,7 @@ async function inspectAuthWithDependencies(
                 piInspection.status === "invalid"
               ? "invalid"
               : "missing";
+  const ompInspection = await dependencies.ompBroker.inspect();
   return {
     provider: "grok",
     sources: [
@@ -724,6 +832,16 @@ async function inspectAuthWithDependencies(
         source: PI_XAI_CREDENTIAL_SOURCE,
         status: piStatus,
         ...(piInspection.error ? { error: piInspection.error } : {}),
+      },
+      {
+        source: "omp:xai-oauth",
+        status:
+          ompInspection.status === "unsupported"
+            ? "invalid"
+            : ompInspection.status,
+        ...(ompInspection.status === "expired"
+          ? { error: "credentials_expired" }
+          : {}),
       },
     ],
   };
@@ -827,7 +945,7 @@ function piSourceAttempt(resolution: PiXaiCredentialResolution): SourceAttempt {
 
 function withAuthStatus(
   provider: ProviderQuota,
-  authStatus: ProviderAuthStatus,
+  authStatus: ProviderAuthStatus | undefined,
   cliRefreshNeeded: boolean,
 ): ProviderQuota {
   return {
@@ -835,7 +953,7 @@ function withAuthStatus(
     ...(cliRefreshNeeded ? { [GROK_CLI_REFRESH_NEEDED]: true as const } : {}),
     state: {
       ...provider.state,
-      authStatus,
+      ...(authStatus ? { authStatus } : {}),
     },
   };
 }

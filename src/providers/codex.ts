@@ -50,6 +50,10 @@ import {
   type PiCodexCredentialInspection,
   type PiCodexCredentialResolution,
 } from "./pi-codex-credential.js";
+import {
+  createOmpOAuthCredentialBroker,
+  type LocalOAuthBroker,
+} from "./local-oauth-credential.js";
 
 const ENDPOINTS = [
   "https://chatgpt.com/backend-api/wham/usage",
@@ -123,10 +127,12 @@ type RawWindow = {
 
 type CodexDependencies = {
   piCodexBroker: PiCodexCredentialBroker;
+  ompBroker: LocalOAuthBroker;
 };
 
 const defaultCodexDependencies: CodexDependencies = {
   piCodexBroker: createPiCodexCredentialBroker(),
+  ompBroker: createOmpOAuthCredentialBroker("openai-codex"),
 };
 
 export function createCodexAdapter(
@@ -140,6 +146,8 @@ export function createCodexAdapter(
     id: "codex",
     label: "Codex",
     discoverAccounts: () => discoverCodexAccounts(dependencies),
+    afterAccountQuotas: (reports) =>
+      fetchExpandedOmpQuota(dependencies, reports),
     fetchQuota: (options) => fetchSingleWinnerQuota(dependencies, options),
     inspectAuth: (_options) => inspectAuthWithDependencies(dependencies),
   };
@@ -187,15 +195,33 @@ async function fetchSingleWinnerQuota(
     dependencies,
     options,
     undefined,
-    {
-      nativeState,
-      builtinResolution,
-    },
+    { nativeState, builtinResolution },
   );
-  const ownKeys = report.accountKeys ?? [];
+  let ompReport: ProviderQuota | undefined;
+  if (report.state.status === "auth_required") {
+    ompReport = await fetchOmpCodexQuota(dependencies, report);
+    if (
+      ompReport?.source === "omp:openai-codex" &&
+      ompReport.state.status === "fresh"
+    )
+      return ompReport;
+  }
+  const result = ompReport
+    ? {
+        ...report,
+        attempts: ompReport.attempts ?? report.attempts,
+        state: {
+          ...report.state,
+          ...(ompReport.state.sourcesTried
+            ? { sourcesTried: ompReport.state.sourcesTried }
+            : {}),
+        },
+      }
+    : report;
+  const ownKeys = result.accountKeys ?? [];
   const pairedKeys = [CODEX_HOME_ACCOUNT_KEY, PI_CODEX_BUILTIN_ID];
   if (!ownKeys.some((key) => pairedKeys.includes(key))) {
-    return report;
+    return result;
   }
   const nativeStoredAccountId =
     nativeState.status === "available" || nativeState.status === "expired"
@@ -205,10 +231,10 @@ async function fetchSingleWinnerQuota(
     nativeStoredAccountId === undefined ||
     nativeStoredAccountId !== resolvedAccountId(builtinResolution)
   ) {
-    return report;
+    return result;
   }
   return {
-    ...report,
+    ...result,
     accountKeys: [...new Set([...ownKeys, ...pairedKeys])],
   };
 }
@@ -391,6 +417,56 @@ async function discoverCodexAccounts(
   return accounts.length > 0 ? accounts : undefined;
 }
 
+const CODEX_CREDENTIAL_ACCOUNT_ID = Symbol("codexCredentialAccountId");
+type CodexCredentialQuota = ProviderQuota & {
+  [CODEX_CREDENTIAL_ACCOUNT_ID]?: string;
+};
+
+async function fetchExpandedOmpQuota(
+  dependencies: CodexDependencies,
+  reports: ProviderQuota[],
+): Promise<ProviderQuota[]> {
+  if (
+    reports.length === 0 ||
+    reports.some(
+      (report) =>
+        report.source?.startsWith("pi:") && report.state.status === "fresh",
+    )
+  )
+    return reports;
+  const fallback = await fetchOmpCodexQuota(
+    dependencies,
+    reports[reports.length - 1]!,
+  );
+  const ompStoredId = (fallback as CodexCredentialQuota | undefined)?.[
+    CODEX_CREDENTIAL_ACCOUNT_ID
+  ];
+  const ompVendorId = fallback?.account?.accountId;
+  if (
+    fallback?.source === "omp:openai-codex" &&
+    fallback.state.status === "fresh" &&
+    !reports.some(
+      (report) =>
+        report.accountKeys?.includes(CODEX_HOME_ACCOUNT_KEY) &&
+        ((ompStoredId !== undefined &&
+          (report as CodexCredentialQuota)[CODEX_CREDENTIAL_ACCOUNT_ID] ===
+            ompStoredId) ||
+          (ompVendorId !== undefined &&
+            report.account?.accountId === ompVendorId)),
+    )
+  ) {
+    return [
+      ...reports,
+      {
+        ...fallback,
+        accountKey: "omp:openai-codex",
+        accountKeys: ["omp:openai-codex"],
+      },
+    ];
+  }
+  return reports;
+}
+
 function laneIdentity(
   reading: ProviderQuota,
   storedAccountId: string | undefined,
@@ -562,6 +638,60 @@ async function fetchPiAccountQuota(
     [...storedAccountIds.values()],
     codexCredentialKey(source) ?? CODEX_HOME_ACCOUNT_KEY,
   );
+}
+async function fetchOmpCodexQuota(
+  dependencies: CodexDependencies,
+  previous: ProviderQuota,
+): Promise<ProviderQuota | undefined> {
+  const source = "omp:openai-codex";
+  const attempts = [...(previous.attempts ?? [])];
+  const resolution = await dependencies.ompBroker.resolve();
+  if (resolution.status === "missing") return previous;
+  if (resolution.status !== "available" && resolution.status !== "expired") {
+    attempts.push({
+      source,
+      status: "failed",
+      error: `credentials_${resolution.status}`,
+      credentialPresent: true,
+    });
+    return {
+      ...previous,
+      state: { ...previous.state, sourcesTried: sourceNames(attempts) },
+      attempts,
+    };
+  }
+
+  const selection = await attemptCodexCandidate({
+    source,
+    credentials: {
+      accessToken: resolution.credential.accessToken,
+      accountId: resolution.credential.accountId,
+    },
+  });
+  if (selection.kind === "quota") {
+    attempts.push({ source, status: "success" });
+    return codexSuccessReport(
+      selection.result,
+      source,
+      attempts,
+      resolution.credential.accountId,
+    );
+  }
+  const error =
+    selection.kind === "live_no_quota"
+      ? "Codex quota unavailable"
+      : selection.error;
+  attempts.push({
+    source,
+    status: "failed",
+    error,
+    credentialPresent: true,
+  });
+  return {
+    ...previous,
+    state: { ...previous.state, sourcesTried: sourceNames(attempts) },
+    attempts,
+  };
 }
 
 async function fetchQuotaWithDependencies(
@@ -869,6 +999,9 @@ function codexSuccessReport(
     report,
     storedAccountId ?? quota.account?.accountId,
   );
+  if (storedAccountId)
+    (report as CodexCredentialQuota)[CODEX_CREDENTIAL_ACCOUNT_ID] =
+      storedAccountId;
   const credentialKey = codexCredentialKey(source);
   if (credentialKey) report.accountKeys = [credentialKey];
   return report;
@@ -1017,6 +1150,15 @@ async function inspectAuthWithDependencies(
       });
     }
   }
+  const ompInspection = await dependencies.ompBroker.inspect();
+  sources.push({
+    source: "omp:openai-codex",
+    status:
+      ompInspection.status === "unsupported" ? "invalid" : ompInspection.status,
+    ...(ompInspection.status === "expired"
+      ? { error: "credentials_expired" }
+      : {}),
+  });
   const binary = await resolveCodexBinary();
   return {
     provider: "codex",

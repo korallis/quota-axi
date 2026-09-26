@@ -16,6 +16,13 @@ for (const name of [
   delete process.env[name];
 }
 
+// Local credential brokers must never see this machine's home stores.
+process.env.HOME = join(
+  tmpdir(),
+  `quota-axi-test-home-${process.pid}-${randomUUID()}`,
+);
+delete process.env.PI_CODING_AGENT_DIR;
+
 // No test may read this machine's real GitHub CLI login: point `gh`'s own
 // configuration directory at a path that never exists. Tests that exercise the
 // store set their own sandbox directory.

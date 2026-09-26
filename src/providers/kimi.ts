@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-  deleteCachedProvider as deleteCachedProviderFromDisk,
+  retireCachedKimiContext,
   readCachedKimiProvider as readCachedProviderFromDisk,
 } from "../cache.js";
 import type {
@@ -14,9 +14,10 @@ import type {
   SourceAttempt,
 } from "../types.js";
 import { calendarMonthsBefore } from "../lib/time.js";
+import { providerFetch } from "../lib/http.js";
 import { VERSION } from "../version.js";
 import { servableStaleWindows, servableUntrustedWindowIds } from "./common.js";
-import { publishKimiReadingContextId } from "./kimi-cache-context.js";
+import { stampKimiReadingContextId } from "./kimi-cache-context.js";
 import {
   selectCredential,
   type CandidateLocalState,
@@ -38,6 +39,10 @@ import {
   type KimiCredentialBroker,
   type KimiCredentialResolution,
 } from "./pi-kimi-credential.js";
+import {
+  createOmpOAuthCredentialBroker,
+  type LocalOAuthBroker,
+} from "./local-oauth-credential.js";
 
 /**
  * Pi brokers a Kimi credential without recording which Kimi deployment issued
@@ -97,9 +102,10 @@ const KIMI_NON_QUOTA_KEYS = new Set(["goods_version", "boosterWallet"]);
 type KimiDependencies = {
   broker: KimiCredentialBroker;
   cliCredentialSource: KimiCodeCliCredentialSource;
+  ompBroker: LocalOAuthBroker;
   fetch: typeof globalThis.fetch;
   readCachedProvider: typeof readCachedProviderFromDisk;
-  deleteCachedProvider: typeof deleteCachedProviderFromDisk;
+  deleteCachedProvider: (provider: "kimi", contextId: string) => void;
   now: () => number;
   deadlineMs: number;
 };
@@ -137,9 +143,11 @@ export function createKimiAdapter(
   const dependencies: KimiDependencies = {
     broker: createPiKimiCredentialBroker(),
     cliCredentialSource: createKimiCodeCliCredentialSource(),
-    fetch: globalThis.fetch,
+    ompBroker: createOmpOAuthCredentialBroker("kimi-code"),
+    fetch: providerFetch,
     readCachedProvider: readCachedProviderFromDisk,
-    deleteCachedProvider: deleteCachedProviderFromDisk,
+    deleteCachedProvider: (_provider, contextId) =>
+      retireCachedKimiContext(contextId),
     now: Date.now,
     deadlineMs: OPERATION_DEADLINE_MS,
     ...overrides,
@@ -199,6 +207,12 @@ export function createKimiAdapter(
                     : cliInspection === "environment_unconfirmed"
                       ? KIMI_CODE_ENVIRONMENT_UNCONFIRMED
                       : undefined;
+      let ompInspection;
+      try {
+        ompInspection = await dependencies.ompBroker.inspect();
+      } catch {
+        ompInspection = { status: "error" as const };
+      }
 
       return {
         provider: "kimi",
@@ -219,6 +233,16 @@ export function createKimiAdapter(
             source: KIMI_CODE_CLI_CREDENTIAL_SOURCE,
             status: cliSourceStatus(cliInspection),
             ...(cliError ? { error: cliError } : {}),
+          },
+          {
+            source: "omp:kimi-code",
+            status:
+              ompInspection.status === "unsupported"
+                ? "invalid"
+                : ompInspection.status,
+            ...(ompInspection.status === "expired"
+              ? { error: "credentials_expired" }
+              : {}),
           },
         ],
       };
@@ -259,6 +283,7 @@ export const kimiAdapter = createKimiAdapter();
 const KIMI_SOURCE_ORDER = [
   PI_KIMI_CREDENTIAL_SOURCE,
   KIMI_CODE_CLI_CREDENTIAL_SOURCE,
+  "omp:kimi-code",
 ] as const;
 
 type KimiFailureRecord = {
@@ -277,28 +302,17 @@ type KimiCandidate =
   | {
       status: "available";
       credential: string;
-      /** The endpoint this credential was issued for; it travels with it. */
       quotaUrl: string;
-      /**
-       * Stored-metadata classification only. A stored-expired credential is
-       * still attempted in its source's declared position, and the request
-       * doubles as the liveness probe that decides the verdict.
-       */
       localState: CandidateLocalState;
-      /**
-       * True when a stored-expired candidate's record carries a refresh
-       * token: an empirically rejected probe then reads as soft expiry with
-       * a rotation path, not as sign-out. Meaningful only for `localState:
-       * "expired"` candidates; a stored-valid credential the server rejected
-       * was revoked, not soft-expired.
-       */
       refreshable?: boolean;
+      cacheContextId?: string;
     }
   | {
       status: "unavailable";
       failure: KimiFailure;
       attemptStatus: "skipped" | "failed";
       credentialPresent: boolean;
+      cacheContextId?: string;
     };
 
 async function acquireKimiQuota(
@@ -319,6 +333,8 @@ async function acquireKimiQuota(
    * `live_no_quota` floor) instead of stopping on the first empty answer.
    */
   let sawLiveNoQuota = false;
+  let noQuotaContextId: string | undefined;
+  let noQuotaSource: "api" | "omp:kimi-code" = "api";
 
   try {
     /**
@@ -340,14 +356,25 @@ async function acquireKimiQuota(
       cacheContextId =
         source === PI_KIMI_CREDENTIAL_SOURCE
           ? PI_KIMI_CACHE_CONTEXT_ID
-          : selection?.contextId;
+          : source === "omp:kimi-code"
+            ? undefined
+            : selection?.contextId;
       const candidate = await resolveKimiCandidate(
         source,
         selection,
         dependencies,
         controller.signal,
       );
+      if (source === "omp:kimi-code") {
+        cacheContextId = candidate.cacheContextId;
+      }
       if (candidate.status === "unavailable") {
+        if (
+          source === "omp:kimi-code" &&
+          candidate.failure.code === "credentials_missing"
+        ) {
+          continue;
+        }
         attempts.push({
           source,
           status: candidate.attemptStatus,
@@ -393,11 +420,24 @@ async function acquireKimiQuota(
              * the identity they are cached under - not the Kimi Code
              * environment, which a Pi reading never contacted.
              */
-            if (cacheContextId) publishKimiReadingContextId(cacheContextId);
             if (outcome.kind === "no_quota") {
+              noQuotaContextId = cacheContextId;
+              noQuotaSource = source === "omp:kimi-code" ? source : "api";
+              if (cacheContextId) {
+                try {
+                  dependencies.deleteCachedProvider("kimi", cacheContextId);
+                } catch {
+                  return { kind: "live_no_quota" };
+                }
+              }
               return { kind: "live_no_quota" };
             }
-            report = outcome.result;
+            report = stampKimiReadingContextId(
+              source === "omp:kimi-code"
+                ? { ...outcome.result, source }
+                : outcome.result,
+              cacheContextId,
+            );
             return { kind: "quota", result: outcome.result };
           } catch (error) {
             const failure = asKimiFailure(error);
@@ -447,10 +487,30 @@ async function acquireKimiQuota(
     }
 
     if (sawLiveNoQuota) {
-      return noQuotaReport(attempts, dependencies);
+      return stampKimiReadingContextId(
+        noQuotaReport(attempts, dependencies, noQuotaSource),
+        noQuotaContextId,
+      );
     }
 
     const defining = definingFailure(failures);
+    if (defining.failure.definitiveAuth) {
+      // Each confirmed-missing source owns its own snapshot. The defining
+      // failure may name Pi even when a named CLI slot also signed out.
+      for (const record of failures) {
+        if (
+          record !== defining &&
+          record.failure.definitiveAuth &&
+          record.cacheContextId
+        ) {
+          try {
+            dependencies.deleteCachedProvider("kimi", record.cacheContextId);
+          } catch {
+            // The current auth verdict does not depend on cache I/O.
+          }
+        }
+      }
+    }
     return failureReport(
       defining.failure,
       defining.cacheContextId,
@@ -536,6 +596,55 @@ async function resolveKimiCandidate(
       resolution.status === "error" ? "failed" : "skipped",
       resolution.status !== "missing",
     );
+  }
+  if (source === "omp:kimi-code") {
+    let resolution;
+    try {
+      resolution = await waitForDeadline(
+        dependencies.ompBroker.resolve(),
+        signal,
+      );
+    } catch {
+      return unavailableCandidate(
+        new KimiFailure("credential_resolution_failed", {
+          staleEligible: true,
+        }),
+        "failed",
+        true,
+      );
+    }
+    if (
+      (resolution.status === "available" || resolution.status === "expired") &&
+      resolution.credential
+    ) {
+      const cacheContextId = resolution.credential.cacheIdentity
+        ? createHash("sha256")
+            .update(resolution.credential.cacheIdentity)
+            .digest("hex")
+        : undefined;
+      return {
+        status: "available",
+        credential: resolution.credential.accessToken,
+        quotaUrl: KIMI_QUOTA_URL,
+        localState: resolution.status === "expired" ? "expired" : "valid",
+        ...(resolution.status === "expired"
+          ? { refreshable: resolution.refreshable }
+          : {}),
+        ...(cacheContextId ? { cacheContextId } : {}),
+      };
+    }
+    return {
+      ...unavailableCandidate(
+        new KimiFailure(
+          resolution.status === "missing"
+            ? "credentials_missing"
+            : `credentials_${resolution.status}`,
+          { staleEligible: true },
+        ),
+        resolution.status === "error" ? "failed" : "skipped",
+        resolution.status !== "missing",
+      ),
+    };
   }
 
   if (!selection) {
@@ -713,18 +822,19 @@ async function resolveCliCredential(
 
 /**
  * Soft expiry for a stored-expired credential whose record carries a refresh
- * path (a Kimi Code CLI `refresh_token`, a Pi `refresh` property). A
- * definitively rejected probe means the short-lived access token died before
- * its rotation, not that the login is gone, so the verdict is the soft
+ * path. A definitively rejected probe means the short-lived access token died
+ * before its rotation, not that the login is gone, so the verdict is the soft
  * `expired_refreshable` classification (status `unavailable`, never
- * `auth_required`) and the cache survives. Rotation stays the vendor CLI's
- * job: nothing here reads or exchanges the refresh token.
+ * `auth_required`) and the cache survives. Nothing here reads or exchanges
+ * the refresh token.
  */
 function refreshableExpiryFailure(source: string): KimiFailure {
   return new KimiFailure(
     source === KIMI_CODE_CLI_CREDENTIAL_SOURCE
       ? "kimi_code_cli_credential_expired"
-      : "pi_kimi_credential_expired",
+      : source === PI_KIMI_CREDENTIAL_SOURCE
+        ? "pi_kimi_credential_expired"
+        : "omp_kimi_credential_expired",
     {
       status: "unavailable",
       staleEligible: true,
@@ -843,11 +953,12 @@ function cliCredentialFailureFor(
 function noQuotaReport(
   attempts: SourceAttempt[],
   dependencies: KimiDependencies,
+  source: "api" | "omp:kimi-code",
 ): ProviderQuota {
   return {
     provider: "kimi",
     label: "Kimi",
-    source: "api",
+    source,
     windows: [],
     state: {
       status: "fresh",
@@ -866,9 +977,9 @@ function failureReport(
   attempts: SourceAttempt[],
   dependencies: KimiDependencies,
 ): ProviderQuota {
-  if (failure.definitiveAuth) {
+  if (failure.definitiveAuth && cacheContextId) {
     try {
-      dependencies.deleteCachedProvider("kimi");
+      dependencies.deleteCachedProvider("kimi", cacheContextId);
     } catch {
       // The current auth failure is still definitive even if the cache is not writable.
     }
@@ -920,7 +1031,7 @@ function staleKimiReport(
 ): ProviderQuota | undefined {
   if (
     cached.provider !== "kimi" ||
-    cached.source !== "api" ||
+    (cached.source !== "api" && cached.source !== "omp:kimi-code") ||
     cached.state.status !== "fresh" ||
     !cached.state.refreshedAt
   ) {

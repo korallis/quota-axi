@@ -58,13 +58,16 @@ export function cacheFilePath(): string {
  * An opaque, deterministic cache-provenance identifier for the Claude profile
  * selected by the current process. The selected path never leaves this helper.
  */
-export function claudeCredentialContextId(): string {
+export function claudeCredentialContextId(
+  localCredentialIdentity?: string,
+  envSelected = claudeEnvOauthToken() !== undefined,
+): string {
   const { configDir, keychainService } = claudeProfileLocations();
   // Include the exact service: it already encodes the secure-storage selector,
   // including a relative raw path hash.
   // Version the identity to withhold snapshots an earlier release wrote for
-  // this same selection: `v2` covers former opaque discovery, `v3` the windows
-  // 0.1.50 stored with `utilization`/`percent` read as remaining.
+  // this same selection: `v2` covers former opaque discovery and `v3` the
+  // windows 0.1.50 stored with `utilization`/`percent` read as remaining.
   //
   // An explicit environment token selects an account the profile path and
   // Keychain service do not describe, so it earns its own identity: a snapshot
@@ -72,7 +75,6 @@ export function claudeCredentialContextId(): string {
   // appended only when such a token is supplied, so every existing profile
   // keeps the identity it already cached under. It is a presence marker, never
   // any part of the token.
-  const envSelected = claudeEnvOauthToken() !== undefined;
   return createHash("sha256")
     .update(
       JSON.stringify([
@@ -80,6 +82,9 @@ export function claudeCredentialContextId(): string {
         resolve(configDir),
         keychainService,
         ...(envSelected ? ["env-token"] : []),
+        ...(localCredentialIdentity
+          ? ["local-oauth", localCredentialIdentity]
+          : []),
       ]),
     )
     .digest("hex");
@@ -178,8 +183,9 @@ function readUntracedJsonFileResult(file: string): JsonFileReadResult {
 export async function readBoundedFile(
   path: string,
   maxBytes: number,
+  traceIdentity?: string,
 ): Promise<Buffer> {
-  traceInput(path);
+  traceInput(path, traceIdentity);
   const file = await open(path, "r");
   try {
     const contents = new Uint8Array(maxBytes + 1);

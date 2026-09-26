@@ -161,6 +161,7 @@ function quotaBlocks(response: QuotaAxiResponse): ProviderBlocks {
       ...providerAttention(provider, measured, scopeAttention.length),
     );
     blocks.attention.push(...shareRows(provider));
+    blocks.attention.push(...creditBucketRows(provider));
     blocks.attention.push(...scopeAttention);
   }
   return blocks;
@@ -232,6 +233,26 @@ function shareRows(provider: ProviderQuota): AttentionRow[] {
       detail: shareDetail(window),
       remedy: NONE,
     }));
+}
+
+function creditBucketRows(provider: ProviderQuota): AttentionRow[] {
+  return (provider.credits?.buckets ?? []).map((bucket) => ({
+    ...providerColumns(provider),
+    scope: `credits:${bucket.id}`,
+    kind: "credit_bucket",
+    detail: [
+      `used ${bucket.used} ${bucket.unit}`,
+      `available ${bucket.available} ${bucket.unit}`,
+      bucket.limit === undefined
+        ? undefined
+        : `limit ${bucket.limit} ${bucket.unit}`,
+      bucket.startsAt ? `starts ${bucket.startsAt}` : undefined,
+      bucket.resetsAt ? `resets ${bucket.resetsAt}` : undefined,
+    ]
+      .filter((part): part is string => part !== undefined)
+      .join(DETAIL_SEPARATOR),
+    remedy: NONE,
+  }));
 }
 
 function shareDetail(window: QuotaWindow): string {
@@ -492,6 +513,7 @@ function auditBlocks(response: QuotaAxiResponse): string[] {
     ...providerColumns(provider),
     email: provider.account?.email ?? "hidden",
     organization: provider.account?.organization ?? NONE,
+    organizationId: provider.account?.organizationId ?? NONE,
     accountId: provider.account?.accountId ?? NONE,
     identityStatus: provider.account?.identityStatus ?? UNKNOWN,
   }));

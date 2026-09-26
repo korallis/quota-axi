@@ -151,7 +151,7 @@ describe("Codex credential-state reporting", () => {
     });
     await fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
 
-    expect(auth.sources[2]).toEqual({
+    expect(auth.sources[3]).toEqual({
       source: "cli-rpc",
       path: binary,
       status: "available",
@@ -179,7 +179,7 @@ describe("Codex credential-state reporting", () => {
       refreshCredentials: false,
     });
 
-    expect(auth.sources[2]).toEqual({
+    expect(auth.sources[3]).toEqual({
       source: "cli-rpc",
       path: undefined,
       status: "missing",
@@ -203,7 +203,7 @@ describe("Codex credential-state reporting", () => {
       refreshCredentials: false,
     });
 
-    expect(auth.sources[2]).toEqual({
+    expect(auth.sources[3]).toEqual({
       source: "cli-rpc",
       path: binary,
       status: "missing",
@@ -865,6 +865,134 @@ describe("Codex credential-state reporting", () => {
     expect(result.state.status).toBe("error");
     expect(result.state.error).toBe("Codex quota unavailable");
     expect(result.state.status).not.toBe("auth_required");
+  });
+
+  it.each([
+    {
+      failure: "rate limit",
+      ompResponse: () =>
+        new Response(null, {
+          status: 429,
+          headers: { "retry-after": "2030-01-01T00:00:00.000Z" },
+        }),
+      expectedOmpError: "Codex quota endpoint rate limited",
+    },
+    {
+      failure: "server failure",
+      ompResponse: () => new Response(null, { status: 503 }),
+      expectedOmpError: "Codex quota unavailable",
+    },
+    {
+      failure: "timeout",
+      ompResponse: () => {
+        const error = new Error("The operation was aborted");
+        error.name = "AbortError";
+        throw error;
+      },
+      expectedOmpError: "Codex quota request timed out",
+    },
+  ])(
+    "preserves Pi sign-in state after an OMP $failure",
+    async ({ ompResponse, expectedOmpError }) => {
+      writePiAuth(piOauthEntry({ access: "rejected-pi-access-token" }));
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url: unknown, init?: RequestInit) => {
+          const token = new Headers(init?.headers).get("authorization");
+          return token === "Bearer omp-access-token"
+            ? ompResponse()
+            : new Response(null, { status: 401 });
+        }),
+      );
+      const { createCodexAdapter } =
+        await import("../../src/providers/codex.js");
+      const options = {
+        allowKeychainPrompt: false,
+        refreshCredentials: false,
+      };
+      const baseline = await createCodexAdapter({
+        ompBroker: {
+          resolve: async () => ({ status: "missing" }),
+          inspect: async () => ({ status: "missing" }),
+        },
+      }).fetchQuota(options);
+      const result = await createCodexAdapter({
+        ompBroker: {
+          resolve: async () => ({
+            status: "available",
+            credential: { accessToken: "omp-access-token" },
+          }),
+          inspect: async () => ({ status: "available" }),
+        },
+      }).fetchQuota(options);
+
+      expect(baseline.state).toMatchObject({
+        status: "auth_required",
+        error: "Codex sign-in required",
+      });
+      expect(result.source).toBe(baseline.source);
+      expect(result.accountKeys).toEqual(baseline.accountKeys);
+      expect(result.state.status).toBe(baseline.state.status);
+      expect(result.state.error).toBe(baseline.state.error);
+      expect(result.attempts?.at(-1)).toMatchObject({
+        source: "omp:openai-codex",
+        status: "failed",
+        error: expectedOmpError,
+      });
+      expect(JSON.stringify(result)).not.toMatch(
+        /rejected-pi-access-token|omp-access-token/,
+      );
+    },
+  );
+
+  it("keeps the Pi verdict after an expired refreshable OMP token is rejected", async () => {
+    writePiAuth(piOauthEntry({ access: "rejected-pi-access-token" }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 401 })),
+    );
+    const { createCodexAdapter } = await import("../../src/providers/codex.js");
+    const options = {
+      allowKeychainPrompt: false,
+      refreshCredentials: false,
+    };
+    const baseline = await createCodexAdapter({
+      ompBroker: {
+        resolve: async () => ({ status: "missing" }),
+        inspect: async () => ({ status: "missing" }),
+      },
+    }).fetchQuota(options);
+    const result = await createCodexAdapter({
+      ompBroker: {
+        resolve: async () => ({
+          status: "expired",
+          refreshable: true,
+          credential: { accessToken: "expired-omp-access-token" },
+        }),
+        inspect: async () => ({ status: "expired" }),
+      },
+    }).fetchQuota(options);
+
+    expect(baseline.state).toMatchObject({
+      status: "auth_required",
+      error: "Codex sign-in required",
+    });
+    expect(result.source).toBe(baseline.source);
+    expect(result.accountKeys).toEqual(baseline.accountKeys);
+    expect(result.state).toMatchObject({
+      status: baseline.state.status,
+      error: baseline.state.error,
+      stale: baseline.state.stale,
+    });
+    expect(result.state.authStatus).toBe(baseline.state.authStatus);
+    expect(result.attempts?.at(-1)).toMatchObject({
+      source: "omp:openai-codex",
+      status: "failed",
+      error: "Codex sign-in required",
+    });
+    expect(JSON.stringify(result)).not.toMatch(
+      /rejected-pi-access-token|expired-omp-access-token/,
+    );
   });
 
   it("keeps a transient native probe failure over an expired Pi credential", async () => {

@@ -30,7 +30,15 @@ import { PROVIDER_IDS } from "./types.js";
 const PROVIDER_SOURCES = [
   "oauth",
   "pi:openai-codex",
+  "pi:anthropic",
+  "omp:anthropic",
+  "pi:google-antigravity",
+  "omp:google-antigravity",
   "cli-rpc",
+  "omp:openai-codex",
+  "omp:kimi-code",
+  "omp:xai-oauth",
+  "omp:devin",
   "cli",
   "api",
   "web",
@@ -68,12 +76,13 @@ const CREDENTIAL_CONTEXT_ID = /^[a-f0-9]{64}$/;
  * a Kimi Code `config.toml` selects the deployment, Command Code's `whoami`
  * identifies the source-plus-account pair, an ElevenLabs API key is itself the
  * account, MiniMax stamps by credential source plus deployment host, and a
- * Codex slot can be signed in to another ChatGPT account. A snapshot from one
- * such context says nothing about another, so each is stamped on write and
+ * Codex slot can be signed in to another ChatGPT account. Antigravity OMP
+ * snapshots are bound to the answering local OAuth credential. A snapshot from
+ * one such context says nothing about another, so each is stamped on write and
  * checked on stale reuse - strictly for Claude, Kimi, Command Code, MiniMax,
- * ElevenLabs, and Devin, whose identity a reading always has (and which skip
- * write and clear when that identity is missing). Codex can write an unstamped
- * snapshot, but stale reuse requires a matching stored account id.
+ * ElevenLabs, Devin, and Antigravity OMP. These sources skip writes and clears
+ * when identity is missing. Codex can write an unstamped snapshot, but stale
+ * reuse requires a matching stored account id.
  *
  * How that stamp is obtained is not the same question for each. A Claude
  * profile is fixed by this process's own environment, so deriving it here reads
@@ -98,13 +107,14 @@ const CREDENTIAL_CONTEXT_ID = /^[a-f0-9]{64}$/;
 const CONTEXT_SCOPED_PROVIDERS: Partial<
   Record<ProviderId, (provider: ProviderQuota) => string | undefined>
 > = {
-  claude: claudeCredentialContextId,
+  claude: claudeCacheContextId,
   kimi: kimiReadingContextId,
   commandcode: commandCodeReadingContextId,
   elevenlabs: elevenLabsReadingContextId,
   devin: devinReadingContextId,
   codex: codexStampContextId,
   minimax: miniMaxReadingContextId,
+  agy: agyOmpStampContextId,
 };
 
 /**
@@ -114,6 +124,53 @@ const CONTEXT_SCOPED_PROVIDERS: Partial<
  * `JSON.stringify`, `Object.keys` and the TOON encoder all skip symbol keys.
  */
 const CODEX_STORED_ACCOUNT_ID = Symbol("codexStoredAccountId");
+const CLAUDE_LOCAL_CREDENTIAL_IDENTITY = Symbol(
+  "claudeLocalCredentialIdentity",
+);
+
+const AGY_OMP_CREDENTIAL_CONTEXT_ID = Symbol("agyOmpCredentialContextId");
+
+type AgyOmpStampedQuota = ProviderQuota & {
+  [AGY_OMP_CREDENTIAL_CONTEXT_ID]?: string;
+};
+
+export function agyOmpCredentialContextId(
+  origin: string,
+  credentialIdentity: string | undefined,
+  accessToken: string,
+  projectId: string | undefined,
+): string {
+  const accessTokenDigest = createHash("sha256")
+    .update(accessToken)
+    .digest("hex");
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        "agy-omp-credential-v2",
+        origin,
+        credentialIdentity,
+        accessTokenDigest,
+        projectId,
+      ]),
+    )
+    .digest("hex");
+}
+
+export function stampAgyOmpCredentialContextId(
+  provider: ProviderQuota,
+  contextId: string | undefined,
+): ProviderQuota {
+  if (contextId)
+    (provider as AgyOmpStampedQuota)[AGY_OMP_CREDENTIAL_CONTEXT_ID] = contextId;
+  return provider;
+}
+
+function agyOmpStampContextId(provider: ProviderQuota): string | undefined {
+  return provider.source === "omp:google-antigravity" ||
+    provider.source === "pi:google-antigravity"
+    ? (provider as AgyOmpStampedQuota)[AGY_OMP_CREDENTIAL_CONTEXT_ID]
+    : undefined;
+}
 
 type CodexStampedQuota = ProviderQuota & {
   [CODEX_STORED_ACCOUNT_ID]?: string;
@@ -125,6 +182,40 @@ export function stampCodexStoredAccountId(
 ): void {
   if (accountId)
     (provider as CodexStampedQuota)[CODEX_STORED_ACCOUNT_ID] = accountId;
+}
+
+export function codexStoredAccountId(
+  provider: ProviderQuota,
+): string | undefined {
+  return (provider as CodexStampedQuota)[CODEX_STORED_ACCOUNT_ID];
+}
+
+type ClaudeLocalStampedQuota = ProviderQuota & {
+  [CLAUDE_LOCAL_CREDENTIAL_IDENTITY]?: string;
+};
+
+export function stampClaudeLocalCredentialIdentity(
+  provider: ProviderQuota,
+  identity: string | undefined,
+): ProviderQuota {
+  if (identity) {
+    (provider as ClaudeLocalStampedQuota)[CLAUDE_LOCAL_CREDENTIAL_IDENTITY] =
+      identity;
+  }
+  return provider;
+}
+
+function claudeCacheContextId(provider: ProviderQuota): string | undefined {
+  if (
+    provider.source === "pi:anthropic" ||
+    provider.source === "omp:anthropic"
+  ) {
+    const identity = (provider as ClaudeLocalStampedQuota)[
+      CLAUDE_LOCAL_CREDENTIAL_IDENTITY
+    ];
+    return identity ? claudeCredentialContextId(identity) : undefined;
+  }
+  return claudeCredentialContextId();
 }
 
 function codexStampContextId(provider: ProviderQuota): string | undefined {
@@ -237,7 +328,7 @@ export function readReusableProviders(
   if (inputsDigest(stamp.inputs) !== stamp.inputsDigest) return undefined;
   return group
     .sort((a, b) => (a.reuse?.lane ?? 0) - (b.reuse?.lane ?? 0))
-    .map(reusedReading);
+    .map((record) => reusedReading(record, now));
 }
 
 /**
@@ -284,20 +375,42 @@ export function readSnapshotProviders(
     (record) => record.snapshot.provider === provider,
   );
   if (records.length === 0) return undefined;
-  if (!records.every((record) => stillCurrent(record, now))) return "expired";
-  return records.map(reusedReading);
+  if (!records.every((record) => stillCurrent(record, now, false)))
+    return "expired";
+  return records.map((record) => reusedReading(record, now, false));
 }
 
 /** Whether no window of this reading has reached its own reported reset. */
-function stillCurrent(record: CachedProvider, now: number): boolean {
-  return record.snapshot.windows.every(
-    (window) =>
-      window.resetsAt === undefined || Date.parse(window.resetsAt) > now,
+function stillCurrent(
+  record: CachedProvider,
+  now: number,
+  includeResetlessCredits = true,
+): boolean {
+  const snapshot = record.snapshot;
+  return (
+    hasCachedMeasure(
+      snapshot.provider,
+      snapshot.windows,
+      servableCachedSnapshot(snapshot, now, includeResetlessCredits).credits,
+    ) &&
+    snapshot.windows.every(
+      (window) =>
+        window.resetsAt === undefined || Date.parse(window.resetsAt) > now,
+    )
   );
 }
 
-function reusedReading(record: CachedProvider): ProviderQuota {
-  const { snapshot, reuse } = record;
+function reusedReading(
+  record: CachedProvider,
+  now: number,
+  includeResetlessCredits = true,
+): ProviderQuota {
+  const { reuse } = record;
+  const snapshot = servableCachedSnapshot(
+    record.snapshot,
+    now,
+    includeResetlessCredits,
+  );
   return {
     ...snapshot,
     ...(reuse?.accountKeys ? { accountKeys: [...reuse.accountKeys] } : {}),
@@ -323,7 +436,40 @@ export function readCachedProvider(
   provider: ProviderId,
   accountKey?: string,
 ): ProviderQuota | undefined {
-  return readCachedRecord(provider, accountKey)?.snapshot;
+  const record = readCachedRecord(provider, accountKey);
+  const snapshot = record
+    ? servableCachedSnapshot(record.snapshot, Date.now())
+    : undefined;
+  return snapshot &&
+    hasCachedMeasure(snapshot.provider, snapshot.windows, snapshot.credits)
+    ? snapshot
+    : undefined;
+}
+
+export function servableCachedSnapshot(
+  snapshot: ProviderQuota,
+  now: number,
+  includeResetlessCredits = true,
+): ProviderQuota {
+  if (snapshot.provider !== "devin" || !snapshot.credits) return snapshot;
+  const credits = { ...snapshot.credits };
+  if (!includeResetlessCredits) {
+    delete credits.remaining;
+    delete credits.unit;
+  }
+  const buckets = credits.buckets?.filter(
+    (bucket) =>
+      (includeResetlessCredits || bucket.resetsAt !== undefined) &&
+      (!bucket.resetsAt || Date.parse(bucket.resetsAt) > now),
+  );
+  if (buckets?.length) credits.buckets = buckets;
+  else delete credits.buckets;
+  return {
+    ...snapshot,
+    credits: Object.values(credits).some((value) => value !== undefined)
+      ? credits
+      : undefined,
+  };
 }
 
 function readCachedRecord(
@@ -436,16 +582,45 @@ export function readCachedDevinProvider(
   return readCachedProviderInContext("devin", contextId);
 }
 
+/**
+ * OMP Antigravity stale quota requires the same OAuth credential identity.
+ * Native CLI and loopback snapshots retain their separate source behavior.
+ */
+export function readCachedAgyProvider(
+  contextId: string | undefined,
+): ProviderQuota | undefined {
+  const record = readCachedRecord("agy");
+  if (!record) return undefined;
+  if (
+    (record.snapshot.source === "omp:google-antigravity" ||
+      record.snapshot.source === "pi:google-antigravity") &&
+    (!contextId || record.credentialContextId !== contextId)
+  )
+    return undefined;
+  const snapshot = servableCachedSnapshot(record.snapshot, Date.now());
+  return snapshot &&
+    hasCachedMeasure(snapshot.provider, snapshot.windows, snapshot.credits)
+    ? snapshot
+    : undefined;
+}
+
 function readCachedProviderInContext(
   provider: ProviderId,
   contextId: string,
 ): ProviderQuota | undefined {
   if (!CREDENTIAL_CONTEXT_ID.test(contextId)) return undefined;
-  return readCacheProviders().find(
+  const record = readCacheProviders().find(
     (item) =>
       item.snapshot.provider === provider &&
       item.credentialContextId === contextId,
-  )?.snapshot;
+  );
+  const snapshot = record
+    ? servableCachedSnapshot(record.snapshot, Date.now())
+    : undefined;
+  return snapshot &&
+    hasCachedMeasure(snapshot.provider, snapshot.windows, snapshot.credits)
+    ? snapshot
+    : undefined;
 }
 
 export function writeCachedProviders(
@@ -457,16 +632,22 @@ export function writeCachedProviders(
   providers = providers.filter((provider) => !provider.state.reused);
   const reuseStamps = reuseStampsFor(providers, readingAt);
   providers = providers.filter((provider) => !isCacheExcluded(provider));
-  const clearProviders = new Set(
-    providers
-      .filter(
-        (provider) =>
-          provider.state.status === "fresh" &&
-          provider.windows.length === 0 &&
-          !missingRequiredContext(provider.provider),
-      )
-      .map(cacheIdentity),
-  );
+  const clearProviders = providers
+    .filter(
+      (provider) =>
+        provider.state.status === "fresh" &&
+        !hasCachedMeasure(
+          provider.provider,
+          provider.windows,
+          provider.credits,
+        ) &&
+        !missingRequiredContext(provider),
+    )
+    .map((provider) => ({
+      identity: cacheIdentity(provider),
+      contextId: CONTEXT_SCOPED_PROVIDERS[provider.provider]?.(provider),
+      scoped: CONTEXT_SCOPED_PROVIDERS[provider.provider] !== undefined,
+    }));
   const cacheable = providers
     .map((provider) => {
       const record = toCacheProvider(provider);
@@ -476,13 +657,19 @@ export function writeCachedProviders(
     .filter((provider): provider is CachedProvider => Boolean(provider));
   // Taking the lock creates the cache directory, so a reading that writes
   // and clears nothing must leave no trace on disk
-  if (cacheable.length === 0 && clearProviders.size === 0) return;
+  if (cacheable.length === 0 && clearProviders.length === 0) return;
 
   withCacheWriteLock(() => {
     const byProvider = new Map<string, CachedProvider>();
     let clearedExisting = false;
     for (const provider of readCacheProviders()) {
-      if (clearProviders.has(cacheIdentity(provider.snapshot))) {
+      if (
+        clearProviders.some(
+          (clear) =>
+            clear.identity === cacheIdentity(provider.snapshot) &&
+            (!clear.scoped || clear.contextId === provider.credentialContextId),
+        )
+      ) {
         clearedExisting = true;
         continue;
       }
@@ -602,6 +789,51 @@ export function retireCodexAccount(accountIds: readonly string[]): void {
   });
 }
 
+export function retireCachedClaudeContext(contextId: string): void {
+  if (!CREDENTIAL_CONTEXT_ID.test(contextId) || !existsSync(cacheFilePath()))
+    return;
+  withCacheWriteLock(() => {
+    const existing = readCacheProviders();
+    const remaining = existing.filter(
+      (record) =>
+        record.snapshot.provider !== "claude" ||
+        record.credentialContextId !== contextId,
+    );
+    if (remaining.length !== existing.length)
+      writeCacheFile(cacheFilePath(), remaining);
+  });
+}
+
+export function retireCachedKimiContext(contextId: string): void {
+  if (!CREDENTIAL_CONTEXT_ID.test(contextId) || !existsSync(cacheFilePath()))
+    return;
+  withCacheWriteLock(() => {
+    const existing = readCacheProviders();
+    const remaining = existing.filter(
+      (record) =>
+        record.snapshot.provider !== "kimi" ||
+        record.credentialContextId !== contextId,
+    );
+    if (remaining.length !== existing.length)
+      writeCacheFile(cacheFilePath(), remaining);
+  });
+}
+
+export function retireCachedDevinContext(contextId: string): void {
+  if (!CREDENTIAL_CONTEXT_ID.test(contextId) || !existsSync(cacheFilePath()))
+    return;
+  withCacheWriteLock(() => {
+    const existing = readCacheProviders();
+    const remaining = existing.filter(
+      (record) =>
+        record.snapshot.provider !== "devin" ||
+        record.credentialContextId !== contextId,
+    );
+    if (remaining.length !== existing.length)
+      writeCacheFile(cacheFilePath(), remaining);
+  });
+}
+
 export function deleteCachedProvider(
   provider: ProviderId,
   accountKey?: string,
@@ -662,8 +894,25 @@ function parseCacheProviders(raw: unknown): CachedProvider[] | undefined {
     .filter((provider): provider is CachedProvider => Boolean(provider));
 }
 
+function hasCachedMeasure(
+  provider: ProviderId,
+  windows: QuotaWindow[],
+  credits: ProviderQuota["credits"],
+): boolean {
+  return (
+    windows.length > 0 ||
+    (provider === "devin" &&
+      ((credits?.remaining !== undefined && credits.remaining >= 0) ||
+        credits?.unlimited === true ||
+        Boolean(credits?.buckets?.length)))
+  );
+}
+
 function toCacheProvider(provider: ProviderQuota): CachedProvider | undefined {
-  if (provider.state.status !== "fresh" || provider.windows.length === 0)
+  if (
+    provider.state.status !== "fresh" ||
+    !hasCachedMeasure(provider.provider, provider.windows, provider.credits)
+  )
     return undefined;
   const snapshot = normalizeCachedProvider(
     {
@@ -689,28 +938,33 @@ function toCacheProvider(provider: ProviderQuota): CachedProvider | undefined {
   )?.snapshot;
   if (!snapshot) return undefined;
   const contextId = CONTEXT_SCOPED_PROVIDERS[provider.provider]?.(provider);
-  // Claude, Kimi, Command Code, MiniMax, ElevenLabs, and Devin require a published
-  // identity; Codex stamps are optional at write time, but an unstamped
-  // snapshot cannot be served as stale.
-  if (
+  // Codex stamps are optional. Native Antigravity sources remain unscoped;
+  // OMP Antigravity and the other context-scoped sources require an identity.
+  const requiresContext =
     provider.provider !== "codex" &&
-    CONTEXT_SCOPED_PROVIDERS[provider.provider] &&
-    !contextId
-  )
-    return undefined;
+    CONTEXT_SCOPED_PROVIDERS[provider.provider] !== undefined &&
+    !(
+      provider.provider === "agy" &&
+      provider.source !== "omp:google-antigravity" &&
+      provider.source !== "pi:google-antigravity"
+    );
+  if (requiresContext && !contextId) return undefined;
   return {
     snapshot,
     ...(contextId ? { credentialContextId: contextId } : {}),
   };
 }
 
-function missingRequiredContext(provider: ProviderId): boolean {
-  // Codex stamps are optional; Claude, Kimi, Command Code, MiniMax, ElevenLabs,
-  // and Devin must
-  // not clear when the current reading has no published context identity.
-  if (provider === "codex") return false;
-  const scope = CONTEXT_SCOPED_PROVIDERS[provider];
-  return scope !== undefined && !scope({ provider } as ProviderQuota);
+function missingRequiredContext(provider: ProviderQuota): boolean {
+  if (provider.provider === "codex") return false;
+  if (
+    provider.provider === "agy" &&
+    provider.source !== "omp:google-antigravity" &&
+    provider.source !== "pi:google-antigravity"
+  )
+    return false;
+  const scope = CONTEXT_SCOPED_PROVIDERS[provider.provider];
+  return scope !== undefined && !scope(provider);
 }
 
 function serializeCachedProvider(
@@ -798,6 +1052,7 @@ function normalizeCachedProvider(
           provider === "kimi" ? upgradeLegacyKimiShareWindow(window) : window,
         )
     : [];
+  const credits = normalizeCachedCredits(data.credits);
   if (
     !provider ||
     !label ||
@@ -805,7 +1060,7 @@ function normalizeCachedProvider(
     !state ||
     !status ||
     !sourcesTried ||
-    windows.length === 0 ||
+    !hasCachedMeasure(provider, windows, credits) ||
     (provider === "codex" && hasInvalidCodexWindowIdentities(windows))
   )
     return undefined;
@@ -833,7 +1088,6 @@ function normalizeCachedProvider(
   const plan = stringValue(data.plan);
   const refreshedAt = stringValue(state.refreshedAt);
   const untrustedWindowIds = stringArrayValue(state.untrustedWindowIds);
-  const credits = normalizeCachedCredits(data.credits);
   if (plan) snapshot.plan = plan;
   if (refreshedAt) snapshot.state.refreshedAt = refreshedAt;
   if (untrustedWindowIds)
@@ -1025,12 +1279,55 @@ function normalizeCachedCredits(
   const remaining = numberValue(data.remaining);
   const unlimited = booleanValue(data.unlimited);
   const unit = literalValue(data.unit, ["usd", "cny", "credits"] as const);
-  if (remaining === undefined && unlimited === undefined && unit === undefined)
+  const buckets: NonNullable<ProviderQuota["credits"]>["buckets"] =
+    Array.isArray(data.buckets)
+      ? data.buckets.flatMap((rawBucket) => {
+          const bucket = objectValue(rawBucket);
+          if (!bucket) return [];
+          const id = literalValue(bucket.id, [
+            "prompt",
+            "flow",
+            "flex",
+          ] as const);
+          const used = numberValue(bucket.used);
+          const available = numberValue(bucket.available);
+          if (
+            !id ||
+            used === undefined ||
+            used < 0 ||
+            available === undefined ||
+            available < 0 ||
+            bucket.unit !== "credits"
+          )
+            return [];
+          const limit = numberValue(bucket.limit);
+          const startsAt = stringValue(bucket.startsAt);
+          const resetsAt = stringValue(bucket.resetsAt);
+          return [
+            {
+              id,
+              used,
+              available,
+              unit: "credits" as const,
+              ...(limit !== undefined && limit >= 0 ? { limit } : {}),
+              ...(startsAt ? { startsAt } : {}),
+              ...(resetsAt ? { resetsAt } : {}),
+            },
+          ];
+        })
+      : undefined;
+  if (
+    remaining === undefined &&
+    unlimited === undefined &&
+    unit === undefined &&
+    !buckets?.length
+  )
     return undefined;
   return {
     remaining,
     unlimited,
     unit,
+    ...(buckets?.length ? { buckets } : {}),
   };
 }
 
