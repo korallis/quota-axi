@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { publishKimiReadingContextId } from "./kimi-cache-context.js";
 import {
   type KimiCodeConfigSource,
   type KimiCodeEnvironment,
@@ -124,7 +123,6 @@ export function createKimiCodeCliCredentialSource(
       environment,
       contextId: contextIdFor(codeHome, environment),
     };
-    publishKimiReadingContextId(selection.contextId);
     return selection;
   };
 

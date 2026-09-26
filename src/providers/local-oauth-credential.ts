@@ -140,9 +140,7 @@ async function resolvePiAnthropic(
   const classified = classifyPiAuthEntry(parsed, "anthropic");
   if (classified.status !== "present") return classified;
   const { entry } = classified;
-  if (typeof entry.type !== "string" || entry.type.toLowerCase() !== "oauth") {
-    return { status: "unsupported" };
-  }
+  if (entry.type !== "oauth") return { status: "unsupported" };
   const accessToken = usableLiteralSecret(entry.access);
   if (!accessToken) return { status: "invalid" };
   const expiresAt = timestampMs(entry.expires);
@@ -252,7 +250,6 @@ async function resolveOmpCredential(
                   json_extract(data, '$.orgName') AS organization,
                   json_extract(data, '$.projectId') AS projectId,
                   identity_key AS identityKey,
-                  updated_at AS updatedAt,
                   usable_refresh(json_extract(data, '$.refresh')) AS hasRefresh
              FROM auth_credentials
             WHERE provider = ?
@@ -273,11 +270,7 @@ async function resolveOmpCredential(
       ) {
         return { status: "invalid" };
       }
-      const cacheIdentity = ompCacheIdentity(
-        provider,
-        row.identityKey,
-        row.updatedAt,
-      );
+      const identityKey = optionalString(row.identityKey);
       const credential: StoredOAuthCredential = {
         accessToken,
         expiresAt,
@@ -285,7 +278,9 @@ async function resolveOmpCredential(
         accountId: optionalString(row.accountId),
         organization: optionalString(row.organization),
         projectId: optionalString(row.projectId),
-        ...(cacheIdentity ? { cacheIdentity } : {}),
+        ...(identityKey
+          ? { cacheIdentity: `omp:${provider}:identity:${identityKey}` }
+          : {}),
       };
       if (expiresAt !== undefined && expiresAt <= deps.now()) {
         return {
@@ -338,20 +333,6 @@ function loadDatabaseSync(): DatabaseSyncConstructor {
   } finally {
     process.emitWarning = emitWarning;
   }
-}
-
-function ompCacheIdentity(
-  provider: string,
-  identityKey: unknown,
-  updatedAt: unknown,
-): string | undefined {
-  const stableIdentity = optionalString(identityKey);
-  if (stableIdentity) return `omp:${provider}:identity:${stableIdentity}`;
-  const updated =
-    typeof updatedAt === "string" || typeof updatedAt === "number"
-      ? String(updatedAt)
-      : undefined;
-  return updated ? `omp:${provider}:updated:${updated}` : undefined;
 }
 
 function timestampMs(value: unknown): number | undefined {

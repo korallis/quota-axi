@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-  deleteCachedProvider as deleteCachedProviderFromDisk,
+  retireCachedKimiContext,
   readCachedKimiProvider as readCachedProviderFromDisk,
 } from "../cache.js";
 import type {
@@ -17,7 +17,7 @@ import { calendarMonthsBefore } from "../lib/time.js";
 import { providerFetch } from "../lib/http.js";
 import { VERSION } from "../version.js";
 import { servableStaleWindows, servableUntrustedWindowIds } from "./common.js";
-import { publishKimiReadingContextId } from "./kimi-cache-context.js";
+import { stampKimiReadingContextId } from "./kimi-cache-context.js";
 import {
   selectCredential,
   type CandidateLocalState,
@@ -105,7 +105,7 @@ type KimiDependencies = {
   ompBroker: LocalOAuthBroker;
   fetch: typeof globalThis.fetch;
   readCachedProvider: typeof readCachedProviderFromDisk;
-  deleteCachedProvider: typeof deleteCachedProviderFromDisk;
+  deleteCachedProvider: (provider: "kimi", contextId: string) => void;
   now: () => number;
   deadlineMs: number;
 };
@@ -146,7 +146,8 @@ export function createKimiAdapter(
     ompBroker: createOmpOAuthCredentialBroker("kimi-code"),
     fetch: providerFetch,
     readCachedProvider: readCachedProviderFromDisk,
-    deleteCachedProvider: deleteCachedProviderFromDisk,
+    deleteCachedProvider: (_provider, contextId) =>
+      retireCachedKimiContext(contextId),
     now: Date.now,
     deadlineMs: OPERATION_DEADLINE_MS,
     ...overrides,
@@ -332,6 +333,7 @@ async function acquireKimiQuota(
    * `live_no_quota` floor) instead of stopping on the first empty answer.
    */
   let sawLiveNoQuota = false;
+  let noQuotaContextId: string | undefined;
 
   try {
     /**
@@ -417,14 +419,16 @@ async function acquireKimiQuota(
              * the identity they are cached under - not the Kimi Code
              * environment, which a Pi reading never contacted.
              */
-            if (cacheContextId) publishKimiReadingContextId(cacheContextId);
             if (outcome.kind === "no_quota") {
+              noQuotaContextId = cacheContextId;
               return { kind: "live_no_quota" };
             }
-            report =
+            report = stampKimiReadingContextId(
               source === "omp:kimi-code"
                 ? { ...outcome.result, source }
-                : outcome.result;
+                : outcome.result,
+              cacheContextId,
+            );
             return { kind: "quota", result: outcome.result };
           } catch (error) {
             const failure = asKimiFailure(error);
@@ -474,7 +478,10 @@ async function acquireKimiQuota(
     }
 
     if (sawLiveNoQuota) {
-      return noQuotaReport(attempts, dependencies);
+      return stampKimiReadingContextId(
+        noQuotaReport(attempts, dependencies),
+        noQuotaContextId,
+      );
     }
 
     const defining = definingFailure(failures);
@@ -943,9 +950,9 @@ function failureReport(
   attempts: SourceAttempt[],
   dependencies: KimiDependencies,
 ): ProviderQuota {
-  if (failure.definitiveAuth) {
+  if (failure.definitiveAuth && cacheContextId) {
     try {
-      dependencies.deleteCachedProvider("kimi");
+      dependencies.deleteCachedProvider("kimi", cacheContextId);
     } catch {
       // The current auth failure is still definitive even if the cache is not writable.
     }

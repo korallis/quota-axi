@@ -74,6 +74,71 @@ describe("additional read-only OAuth credential stores", () => {
     );
   });
 
+  it("requires an OMP identity key for cache identity across replacements", async () => {
+    const home = temporaryDirectory();
+    const path = join(home, ".omp", "agent", "agent.db");
+    mkdirSync(dirname(path), { recursive: true });
+    const database = new DatabaseSync(path);
+    database.exec(
+      "CREATE TABLE auth_credentials (id INTEGER PRIMARY KEY, provider TEXT NOT NULL, credential_type TEXT NOT NULL, data TEXT NOT NULL, disabled_cause TEXT, identity_key TEXT, updated_at TEXT)",
+    );
+    const insert = database.prepare(
+      "INSERT INTO auth_credentials (provider, credential_type, data, updated_at) VALUES ('anthropic', 'oauth', ?, ?)",
+    );
+    insert.run(
+      JSON.stringify({ access: "synthetic-account-a" }),
+      "2026-09-25T00:00:00Z",
+    );
+    const broker = createOmpOAuthCredentialBroker("anthropic", {
+      environment: { HOME: home },
+      homeDirectory: () => home,
+    });
+    const first = await broker.resolve();
+    expect(first.status).toBe("available");
+    if (first.status === "available")
+      expect(first.credential.cacheIdentity).toBeUndefined();
+    insert.run(
+      JSON.stringify({ access: "synthetic-account-b" }),
+      "2026-09-25T00:00:00Z",
+    );
+    const second = await broker.resolve();
+    expect(second.status).toBe("available");
+    if (second.status === "available") {
+      expect(second.credential.accessToken).toBe("synthetic-account-b");
+      expect(second.credential.cacheIdentity).toBeUndefined();
+    }
+    database.close();
+  });
+
+  it.each(["OAuth", "OAUTH", "oAuth"])(
+    "rejects the undocumented Pi Anthropic %s credential type",
+    async (type) => {
+      const home = temporaryDirectory();
+      const agent = join(home, ".pi", "agent");
+      mkdirSync(agent, { recursive: true });
+      writeFileSync(
+        join(agent, "auth.json"),
+        JSON.stringify({
+          anthropic: {
+            type,
+            access: "synthetic-pi-access",
+          },
+        }),
+        { mode: 0o600 },
+      );
+      const broker = createPiAnthropicCredentialBroker({
+        environment: { PI_CODING_AGENT_DIR: agent },
+        homeDirectory: () => home,
+      });
+      await expect(broker.resolve()).resolves.toEqual({
+        status: "unsupported",
+      });
+      await expect(broker.inspect()).resolves.toEqual({
+        status: "unsupported",
+      });
+    },
+  );
+
   it("reads OMP OAuth fields from SQLite read-only and never selects refresh", async () => {
     const home = temporaryDirectory();
     const databasePath = join(home, ".omp", "agent", "agent.db");

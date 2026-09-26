@@ -15,6 +15,7 @@ import {
   readCachedCommandCodeProvider,
   readCachedCodexProvider,
   readCachedKimiProvider,
+  retireCachedKimiContext,
   readCachedDevinProvider,
   readCachedMiniMaxProvider,
   readCachedProvider,
@@ -37,6 +38,7 @@ import {
 import { staleFromCache } from "../src/providers/common.js";
 import { withQuotaSemantics } from "../src/interpretation.js";
 import { createKimiCodeCliCredentialSource } from "../src/providers/kimi-code-cli-credential.js";
+import { stampKimiReadingContextId } from "../src/providers/kimi-cache-context.js";
 import { createKimiAdapter } from "../src/providers/kimi.js";
 import {
   clearDevinReadingContextId,
@@ -425,7 +427,12 @@ api_key = "cache-context-must-not-depend-on-this-118"
     );
     const mainland = await selectKimiEnvironment();
 
-    writeCachedProviders([{ ...quota("kimi", 42), source: "api" as const }]);
+    writeCachedProviders([
+      stampKimiReadingContextId(
+        { ...quota("kimi", 42), source: "api" as const },
+        mainland,
+      ),
+    ]);
 
     const payload = JSON.parse(readFileSync(cacheFilePath(), "utf8")) as {
       providers: Array<{ credentialContext?: string }>;
@@ -488,7 +495,12 @@ oauth_host = "https://auth.kimi.ai"
 `,
     );
 
-    writeCachedProviders([{ ...quota("kimi", 42), source: "api" as const }]);
+    writeCachedProviders([
+      stampKimiReadingContextId(
+        { ...quota("kimi", 42), source: "api" as const },
+        readingEnvironment,
+      ),
+    ]);
 
     expect(readCachedKimiProvider(readingEnvironment)).toBeDefined();
     expect(
@@ -524,7 +536,8 @@ oauth_host = "https://auth.kimi.ai"
         cliCredentialSource: cliSource,
         fetch: (async () => respond()) as unknown as typeof fetch,
         readCachedProvider: readCachedKimiProvider,
-        deleteCachedProvider,
+        deleteCachedProvider: (_provider, contextId) =>
+          retireCachedKimiContext(contextId),
         now: () => Date.parse(at),
       }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
 
@@ -629,7 +642,7 @@ oauth_host = "https://auth.kimi.ai"
       ],
     };
 
-    writeCachedProviders([kimi]);
+    writeCachedProviders([stampKimiReadingContextId(kimi, "a".repeat(64))]);
 
     const bytes = readFileSync(cacheFilePath(), "utf8");
     expect(statSync(cacheFilePath()).mode & 0o777).toBe(0o600);
@@ -757,7 +770,10 @@ oauth_host = "https://auth.kimi.ai"
 
   it("deletes a definitive-auth provider while retaining other snapshots", () => {
     useTempCache();
-    writeCachedProviders([quota("claude", 10), quota("kimi", 20)]);
+    writeCachedProviders([
+      quota("claude", 10),
+      stampKimiReadingContextId(quota("kimi", 20), "a".repeat(64)),
+    ]);
 
     deleteCachedProvider("kimi");
 
