@@ -1658,7 +1658,7 @@ describe("Kimi credential outcomes and cache policy", () => {
     ["omp", "pi"],
     ["pi", "omp"],
   ] as const)(
-    "keeps %s cache when the %s credential is rejected",
+    "keeps %s cache when the %s credential is rejected or returns no quota",
     async (cachedSource, rejectedSource) => {
       const cacheHome = mkdtempSync(join(tmpdir(), "quota-axi-kimi-context-"));
       const originalCacheHome = process.env.XDG_CACHE_HOME;
@@ -1683,6 +1683,7 @@ describe("Kimi credential outcomes and cache policy", () => {
           pi: "available" | "missing",
           omp: boolean,
           status: number,
+          empty = false,
         ) =>
           createKimiAdapter({
             broker: broker(
@@ -1698,7 +1699,7 @@ describe("Kimi credential outcomes and cache policy", () => {
             ompBroker: ompBroker(omp),
             fetch: vi.fn(async () =>
               status === 200
-                ? jsonResponse(SUCCESS_PAYLOAD)
+                ? jsonResponse(empty ? {} : SUCCESS_PAYLOAD)
                 : new Response(null, { status }),
             ) as unknown as typeof fetch,
             readCachedProvider: readCachedKimiProvider,
@@ -1721,6 +1722,16 @@ describe("Kimi credential outcomes and cache policy", () => {
         ).fetchQuota(OPTIONS);
         expect(rejected.state.status).toBe("auth_required");
         expect(readCachedProvider("kimi")?.source).toBe(fresh.source);
+        const siblingEmpty = await adapter(
+          rejectedSource === "pi" ? "available" : "missing",
+          rejectedSource === "omp",
+          200,
+          true,
+        ).fetchQuota(OPTIONS);
+        expect(siblingEmpty.state.status).toBe("fresh");
+        expect(siblingEmpty.windows).toEqual([]);
+        writeCachedProviders([siblingEmpty], new Date(NOW).toISOString());
+        expect(readCachedProvider("kimi")?.windows).toEqual(fresh.windows);
         const stale = await adapter(
           cachedSource === "pi" ? "available" : "missing",
           cachedSource === "omp",
@@ -1734,6 +1745,16 @@ describe("Kimi credential outcomes and cache policy", () => {
           401,
         ).fetchQuota(OPTIONS);
         expect(ownRejection.state.status).toBe("auth_required");
+        expect(readCachedProvider("kimi")).toBeUndefined();
+        writeCachedProviders([fresh], new Date(NOW).toISOString());
+        const ownEmpty = await adapter(
+          cachedSource === "pi" ? "available" : "missing",
+          cachedSource === "omp",
+          200,
+          true,
+        ).fetchQuota(OPTIONS);
+        expect(ownEmpty.state.status).toBe("fresh");
+        writeCachedProviders([ownEmpty], new Date(NOW).toISOString());
         expect(readCachedProvider("kimi")).toBeUndefined();
       } finally {
         if (originalCacheHome === undefined) delete process.env.XDG_CACHE_HOME;

@@ -630,20 +630,22 @@ export function writeCachedProviders(
   providers = providers.filter((provider) => !provider.state.reused);
   const reuseStamps = reuseStampsFor(providers, readingAt);
   providers = providers.filter((provider) => !isCacheExcluded(provider));
-  const clearProviders = new Set(
-    providers
-      .filter(
-        (provider) =>
-          provider.state.status === "fresh" &&
-          !hasCachedMeasure(
-            provider.provider,
-            provider.windows,
-            provider.credits,
-          ) &&
-          !missingRequiredContext(provider),
-      )
-      .map(cacheIdentity),
-  );
+  const clearProviders = providers
+    .filter(
+      (provider) =>
+        provider.state.status === "fresh" &&
+        !hasCachedMeasure(
+          provider.provider,
+          provider.windows,
+          provider.credits,
+        ) &&
+        !missingRequiredContext(provider),
+    )
+    .map((provider) => ({
+      identity: cacheIdentity(provider),
+      contextId: CONTEXT_SCOPED_PROVIDERS[provider.provider]?.(provider),
+      scoped: CONTEXT_SCOPED_PROVIDERS[provider.provider] !== undefined,
+    }));
   const cacheable = providers
     .map((provider) => {
       const record = toCacheProvider(provider);
@@ -653,13 +655,19 @@ export function writeCachedProviders(
     .filter((provider): provider is CachedProvider => Boolean(provider));
   // Taking the lock creates the cache directory, so a reading that writes
   // and clears nothing must leave no trace on disk
-  if (cacheable.length === 0 && clearProviders.size === 0) return;
+  if (cacheable.length === 0 && clearProviders.length === 0) return;
 
   withCacheWriteLock(() => {
     const byProvider = new Map<string, CachedProvider>();
     let clearedExisting = false;
     for (const provider of readCacheProviders()) {
-      if (clearProviders.has(cacheIdentity(provider.snapshot))) {
+      if (
+        clearProviders.some(
+          (clear) =>
+            clear.identity === cacheIdentity(provider.snapshot) &&
+            (!clear.scoped || clear.contextId === provider.credentialContextId),
+        )
+      ) {
         clearedExisting = true;
         continue;
       }

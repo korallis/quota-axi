@@ -869,6 +869,15 @@ oauth_host = "https://auth.kimi.ai"
     );
     publishCommandCodeReadingContextId(contextId);
     writeCachedProviders([quota("commandcode", 40)]);
+    const siblingContext = commandCodeCacheContextId(
+      "omp:commandcode",
+      "org:another-fixture",
+    );
+    publishCommandCodeReadingContextId(siblingContext);
+    writeCachedProviders([quotaWithoutWindows("commandcode")]);
+    expect(readCachedCommandCodeProvider(contextId)).toBeDefined();
+
+    publishCommandCodeReadingContextId(contextId);
     writeCachedProviders([quotaWithoutWindows("commandcode")]);
 
     expect(readCachedCommandCodeProvider(contextId)).toBeUndefined();
