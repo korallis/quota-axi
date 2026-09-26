@@ -398,7 +398,10 @@ describe("Claude Pi and OMP OAuth quota sources", () => {
       refreshCredentials: false,
     });
 
-    expect(result.state.status).not.toBe("fresh");
+    expect(result.state).toMatchObject({
+      status: "auth_required",
+      error: "credentials_missing",
+    });
     expect(result.state.sourcesTried).not.toContain("pi:anthropic");
     expect(result.state.sourcesTried).not.toContain("omp:anthropic");
     expect(fetchMock).not.toHaveBeenCalled();

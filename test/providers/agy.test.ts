@@ -1944,6 +1944,52 @@ describe("Antigravity provider", () => {
     );
   });
 
+  it("keeps native loopback rejection ahead of Pi outage and OMP rejection", async () => {
+    const port = await startServer((response) => {
+      response.writeHead(401);
+      response.end();
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        const authorization = new Headers(init?.headers).get("authorization");
+        return new Response(null, {
+          status: authorization === "Bearer pi-outage" ? 503 : 401,
+        });
+      }),
+    );
+    const report = await fetchQuotaWithRuntime({
+      ...runtimeWith({
+        ps: "123 /Users/test/.local/bin/agy\n",
+        lsof: lsofFor(123, port),
+        requestJson: requestLoopbackJson,
+      }),
+      resolvePiAntigravity: async () => ({
+        status: "available",
+        credential: { accessToken: "pi-outage", projectId: "pi-project" },
+      }),
+      resolveOmpAntigravity: async () => ({
+        status: "available",
+        credential: { accessToken: "omp-rejected", projectId: "omp-project" },
+      }),
+    });
+
+    expect(report.state).toMatchObject({
+      status: "auth_required",
+      error: "Antigravity sign-in required",
+    });
+    expect(report.attempts).toMatchObject([
+      { source: "cli", status: "skipped" },
+      {
+        source: "loopback",
+        status: "failed",
+        error: "Antigravity sign-in required",
+      },
+      { source: "pi:google-antigravity", status: "failed" },
+      { source: "omp:google-antigravity", status: "failed" },
+    ]);
+  });
+
   it("keeps native rejection ahead of rejected Pi and unavailable OMP", async () => {
     const port = await startServer((response) => {
       response.writeHead(401);

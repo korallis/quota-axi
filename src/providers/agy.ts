@@ -339,6 +339,8 @@ export async function fetchQuotaWithRuntime(
     else if (
       piFailure &&
       !isDefinitiveAuthFailure(piFailure) &&
+      !isDefinitiveAuthFailure(cliFailure) &&
+      !isDefinitiveAuthFailure(loopbackFailure) &&
       isDefinitiveAuthFailure(ompFailure)
     )
       finalFailure = piFailure;
