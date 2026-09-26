@@ -249,17 +249,23 @@ export async function fetchQuotaWithRuntime(
         contextId,
       );
     } catch (error) {
-      if (candidate.source === "pi:google-antigravity") piFailure = error;
-      else ompFailure = error;
+      const failure =
+        resolution.status === "expired" &&
+        resolution.refreshable &&
+        isDefinitiveAuthFailure(error)
+          ? new AgyRefreshableExpiryError("Antigravity access token expired")
+          : error;
+      if (candidate.source === "pi:google-antigravity") piFailure = failure;
+      else ompFailure = failure;
       if (
         !isDefinitiveAuthFailure(finalFailure) ||
-        isDefinitiveAuthFailure(error)
+        isDefinitiveAuthFailure(failure)
       )
-        finalFailure = error;
+        finalFailure = failure;
       attempts[attempts.length - 1] = {
         source: candidate.source,
         status: "failed",
-        error: errorMessage(error),
+        error: errorMessage(failure),
       };
     }
   }
@@ -276,7 +282,14 @@ export async function fetchQuotaWithRuntime(
         attempt.status === "failed" &&
         attempt.error === "Antigravity sign-in required",
     );
-  if (cachedRejected) {
+  const cachedSoftExpired =
+    !isDefinitiveAuthFailure(cliFailure) &&
+    !isDefinitiveAuthFailure(loopbackFailure) &&
+    ((cached?.source === "pi:google-antigravity" &&
+      piFailure instanceof AgyRefreshableExpiryError) ||
+      (cached?.source === "omp:google-antigravity" &&
+        ompFailure instanceof AgyRefreshableExpiryError));
+  if (cachedRejected || cachedSoftExpired) {
     if (cached?.source === "cli") finalFailure = cliFailure;
     if (cached?.source === "cli-rpc") finalFailure = loopbackFailure;
     if (cached?.source === "pi:google-antigravity") finalFailure = piFailure;
@@ -293,6 +306,17 @@ export async function fetchQuotaWithRuntime(
     !isDefinitiveAuthFailure(ompFailure)
   )
     finalFailure = ompFailure;
+  if (
+    !cachedRejected &&
+    isDefinitiveAuthFailure(finalFailure) &&
+    !isDefinitiveAuthFailure(cliFailure) &&
+    !isDefinitiveAuthFailure(loopbackFailure)
+  ) {
+    finalFailure =
+      (piFailure instanceof AgyRefreshableExpiryError && piFailure) ||
+      (ompFailure instanceof AgyRefreshableExpiryError && ompFailure) ||
+      finalFailure;
+  }
   const finalError = errorMessage(finalFailure);
   if (cachedRejected) {
     try {
@@ -304,10 +328,14 @@ export async function fetchQuotaWithRuntime(
     const stale = cached
       ? staleFromCache(cached, finalError, sourceNames(attempts), attempts)
       : undefined;
-    if (stale) return stale;
+    if (stale) {
+      if (finalFailure instanceof AgyRefreshableExpiryError)
+        stale.state.authStatus = "expired_refreshable";
+      return stale;
+    }
   }
 
-  return failedProvider({
+  const report = failedProvider({
     provider: "agy",
     label: "Antigravity",
     status: statusForFailure(finalFailure),
@@ -315,6 +343,9 @@ export async function fetchQuotaWithRuntime(
     sourcesTried: sourceNames(attempts),
     attempts,
   });
+  if (finalFailure instanceof AgyRefreshableExpiryError)
+    report.state.authStatus = "expired_refreshable";
+  return report;
 }
 
 export async function inspectAuth(
@@ -1301,7 +1332,11 @@ function staleEligibleFailure(error: unknown): boolean {
 }
 
 function isDefinitiveAuthFailure(error: unknown): boolean {
-  if (error instanceof AgyCsrfError) return false;
+  if (
+    error instanceof AgyCsrfError ||
+    error instanceof AgyRefreshableExpiryError
+  )
+    return false;
   return statusForError(errorMessage(error)) === "auth_required";
 }
 
@@ -1339,6 +1374,8 @@ function withinProbeBudget<T>(
 }
 
 class AgyUnavailableError extends Error {}
+
+class AgyRefreshableExpiryError extends AgyUnavailableError {}
 
 class AgyCsrfError extends AgyUnavailableError {}
 

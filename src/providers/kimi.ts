@@ -334,6 +334,7 @@ async function acquireKimiQuota(
    */
   let sawLiveNoQuota = false;
   let noQuotaContextId: string | undefined;
+  let noQuotaSource: "api" | "omp:kimi-code" = "api";
 
   try {
     /**
@@ -421,6 +422,14 @@ async function acquireKimiQuota(
              */
             if (outcome.kind === "no_quota") {
               noQuotaContextId = cacheContextId;
+              noQuotaSource = source === "omp:kimi-code" ? source : "api";
+              if (cacheContextId) {
+                try {
+                  dependencies.deleteCachedProvider("kimi", cacheContextId);
+                } catch {
+                  return { kind: "live_no_quota" };
+                }
+              }
               return { kind: "live_no_quota" };
             }
             report = stampKimiReadingContextId(
@@ -479,7 +488,7 @@ async function acquireKimiQuota(
 
     if (sawLiveNoQuota) {
       return stampKimiReadingContextId(
-        noQuotaReport(attempts, dependencies),
+        noQuotaReport(attempts, dependencies, noQuotaSource),
         noQuotaContextId,
       );
     }
@@ -927,11 +936,12 @@ function cliCredentialFailureFor(
 function noQuotaReport(
   attempts: SourceAttempt[],
   dependencies: KimiDependencies,
+  source: "api" | "omp:kimi-code",
 ): ProviderQuota {
   return {
     provider: "kimi",
     label: "Kimi",
-    source: "api",
+    source,
     windows: [],
     state: {
       status: "fresh",

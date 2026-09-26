@@ -628,8 +628,10 @@ describe("Antigravity provider", () => {
 
       expect(fetchMock).toHaveBeenCalledTimes(outcome === "quota" ? 1 : 2);
       expect(result.state.status).toBe(
-        outcome === "quota" ? "fresh" : "auth_required",
+        outcome === "quota" ? "fresh" : "unavailable",
       );
+      if (outcome === "rejected")
+        expect(result.state.authStatus).toBe("expired_refreshable");
       expect(result.windows).toHaveLength(outcome === "quota" ? 1 : 0);
       if (outcome === "quota")
         expect(result.source).toBe("omp:google-antigravity");
@@ -830,6 +832,215 @@ describe("Antigravity provider", () => {
       expect(fetchMock).toHaveBeenCalledTimes(4);
     },
   );
+
+  it.each([
+    ["pi:google-antigravity", 401],
+    ["pi:google-antigravity", 403],
+    ["omp:google-antigravity", 401],
+    ["omp:google-antigravity", 403],
+  ] as const)(
+    "keeps expired refreshable %s access on HTTP %i soft and cached",
+    async (source, httpStatus) => {
+      const fetchMock = vi.fn(
+        async () => new Response(null, { status: httpStatus }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const runtimeFor = (refreshable: boolean) => ({
+        ...runtimeWith({}),
+        ...(source === "pi:google-antigravity"
+          ? {
+              resolvePiAntigravity: async () => ({
+                status: "expired" as const,
+                refreshable,
+                credential: {
+                  accessToken: "synthetic-antigravity-access",
+                  projectId: "synthetic-project",
+                },
+              }),
+            }
+          : {
+              resolveOmpAntigravity: async () => ({
+                status: "expired" as const,
+                refreshable,
+                credential: {
+                  accessToken: "synthetic-antigravity-access",
+                  projectId: "synthetic-project",
+                },
+              }),
+            }),
+      });
+      const withoutCache = await fetchQuotaWithRuntime(runtimeFor(true));
+      expect(withoutCache.state).toMatchObject({
+        status: "unavailable",
+        stale: false,
+        authStatus: "expired_refreshable",
+        error: "Antigravity access token expired",
+      });
+      const cached = cachedAgyQuota();
+      cached.source = source;
+      writeCachedProviders([
+        stampAgyOmpCredentialContextId(
+          cached,
+          agyOmpCredentialContextId(
+            `${source === "pi:google-antigravity" ? "pi:" : ""}https://daily-cloudcode-pa.googleapis.com`,
+            undefined,
+            "synthetic-antigravity-access",
+          ),
+        ),
+      ]);
+      const stale = await fetchQuotaWithRuntime(runtimeFor(true));
+      expect(stale.state).toMatchObject({
+        status: "stale",
+        stale: true,
+        authStatus: "expired_refreshable",
+        error: "Antigravity access token expired",
+      });
+      expect(stale.windows).toHaveLength(1);
+      expect(readCachedProvider("agy")?.source).toBe(source);
+      expect(stale.attempts?.at(-1)).toMatchObject({
+        source,
+        status: "failed",
+        error: "Antigravity access token expired",
+      });
+      const hardRejection = await fetchQuotaWithRuntime(runtimeFor(false));
+      expect(hardRejection.state.status).toBe("auth_required");
+      expect(readCachedProvider("agy")).toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(
+        source === "pi:google-antigravity" ? 3 : 6,
+      );
+      expect(
+        JSON.stringify([withoutCache, stale, hardRejection]),
+      ).not.toContain("synthetic-antigravity-access");
+    },
+  );
+
+  it("keeps Pi refreshable expiry soft after an OMP hard rejection", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 401 })),
+    );
+    const report = await fetchQuotaWithRuntime({
+      ...runtimeWith({}),
+      resolvePiAntigravity: async () => ({
+        status: "expired",
+        refreshable: true,
+        credential: {
+          accessToken: "synthetic-pi-access",
+          projectId: "pi-project",
+        },
+      }),
+      resolveOmpAntigravity: async () => ({
+        status: "available",
+        credential: {
+          accessToken: "synthetic-omp-access",
+          projectId: "omp-project",
+        },
+      }),
+    });
+    expect(report.state).toMatchObject({
+      status: "unavailable",
+      authStatus: "expired_refreshable",
+      error: "Antigravity access token expired",
+    });
+    expect(report.attempts?.map(({ source }) => source)).toEqual([
+      "cli",
+      "loopback",
+      "pi:google-antigravity",
+      "omp:google-antigravity",
+    ]);
+  });
+
+  it("keeps cached OMP refreshable expiry soft after a Pi hard rejection", async () => {
+    const cached = cachedAgyQuota();
+    cached.source = "omp:google-antigravity";
+    writeCachedProviders([
+      stampAgyOmpCredentialContextId(
+        cached,
+        agyOmpCredentialContextId(
+          "https://daily-cloudcode-pa.googleapis.com",
+          undefined,
+          "synthetic-omp-access",
+        ),
+      ),
+    ]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 401 })),
+    );
+    const report = await fetchQuotaWithRuntime({
+      ...runtimeWith({}),
+      resolvePiAntigravity: async () => ({
+        status: "available",
+        credential: {
+          accessToken: "synthetic-pi-access",
+          projectId: "pi-project",
+        },
+      }),
+      resolveOmpAntigravity: async () => ({
+        status: "expired",
+        refreshable: true,
+        credential: {
+          accessToken: "synthetic-omp-access",
+          projectId: "omp-project",
+        },
+      }),
+    });
+    expect(report.state).toMatchObject({
+      status: "stale",
+      authStatus: "expired_refreshable",
+      error: "Antigravity access token expired",
+    });
+    expect(readCachedProvider("agy")?.source).toBe("omp:google-antigravity");
+  });
+
+  it("keeps a native rejection ahead of a cached Pi soft expiry", async () => {
+    const cached = cachedAgyQuota();
+    cached.source = "pi:google-antigravity";
+    writeCachedProviders([
+      stampAgyOmpCredentialContextId(
+        cached,
+        agyOmpCredentialContextId(
+          "pi:https://daily-cloudcode-pa.googleapis.com",
+          undefined,
+          "synthetic-pi-access",
+        ),
+      ),
+    ]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 401 })),
+    );
+    const report = await fetchQuotaWithRuntime({
+      ...runtimeWith({
+        ps: "123 /Users/test/.local/bin/agy\n",
+        lsof: lsofFor(123, 64440),
+        requestJson: async () => {
+          throw new Error("Antigravity sign-in required");
+        },
+      }),
+      resolvePiAntigravity: async () => ({
+        status: "expired",
+        refreshable: true,
+        credential: {
+          accessToken: "synthetic-pi-access",
+          projectId: "pi-project",
+        },
+      }),
+    });
+    expect(report.attempts?.[1]).toMatchObject({
+      source: "loopback",
+      status: "failed",
+      error: "Antigravity sign-in required",
+    });
+    expect(report.state).toMatchObject({
+      status: "auth_required",
+      error: "Antigravity sign-in required",
+    });
+    expect(report.attempts?.at(-1)?.error).toBe(
+      "Antigravity access token expired",
+    );
+    expect(readCachedProvider("agy")?.source).toBe("pi:google-antigravity");
+  });
 
   it("serves stale OMP quota only for the same OAuth credential", async () => {
     const runtimeFor = (account: "A" | "B") => ({

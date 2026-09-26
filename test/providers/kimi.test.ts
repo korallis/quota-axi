@@ -1655,6 +1655,112 @@ describe("Kimi credential outcomes and cache policy", () => {
   });
 
   it.each([
+    ["pi", false],
+    ["pi", true],
+    ["cli", true],
+    ["omp", true],
+  ] as const)(
+    "retires %s cache across successive empty sources (OMP %s)",
+    async (cachedSource, includeOmp) => {
+      const cacheHome = mkdtempSync(join(tmpdir(), "quota-axi-kimi-empty-"));
+      const originalCacheHome = process.env.XDG_CACHE_HOME;
+      process.env.XDG_CACHE_HOME = cacheHome;
+      try {
+        const adapter = (
+          pi: boolean,
+          cli: boolean,
+          omp: boolean,
+          status: number,
+          empty = false,
+        ) =>
+          createKimiAdapter({
+            broker: broker(
+              pi
+                ? {
+                    status: "available",
+                    kind: "api_key",
+                    credential: "synthetic-pi-access",
+                  }
+                : { status: "missing" },
+            ),
+            cliCredentialSource: cliCredentialSource(
+              cli
+                ? { status: "available", accessToken: "synthetic-cli-access" }
+                : { status: "missing" },
+            ),
+            ompBroker: {
+              resolve: async () =>
+                omp
+                  ? ({
+                      status: "available",
+                      credential: {
+                        accessToken: "synthetic-omp-access",
+                        cacheIdentity:
+                          "omp:kimi-code:identity:synthetic-omp-seat",
+                      },
+                    } as const)
+                  : ({ status: "missing" } as const),
+              inspect: async () => ({
+                status: omp ? ("available" as const) : ("missing" as const),
+              }),
+            },
+            fetch: vi.fn(async () =>
+              status === 200
+                ? jsonResponse(empty ? {} : SUCCESS_PAYLOAD)
+                : new Response(null, { status }),
+            ) as unknown as typeof fetch,
+            readCachedProvider: readCachedKimiProvider,
+            now: () => NOW,
+          });
+        const fresh = await adapter(
+          cachedSource === "pi",
+          cachedSource === "cli",
+          cachedSource === "omp",
+          200,
+        ).fetchQuota(OPTIONS);
+        expect(fresh.state.status).toBe("fresh");
+        writeCachedProviders([fresh], new Date(NOW).toISOString());
+        expect(readCachedProvider("kimi")).toBeDefined();
+
+        const empty = await adapter(
+          true,
+          true,
+          includeOmp,
+          200,
+          true,
+        ).fetchQuota(OPTIONS);
+        expect(empty.state.status).toBe("fresh");
+        expect(empty.windows).toEqual([]);
+        expect(empty.source).toBe(includeOmp ? "omp:kimi-code" : "api");
+        expect(
+          empty.attempts
+            ?.filter((attempt) => attempt.status === "success")
+            .map((attempt) => attempt.source),
+        ).toEqual([
+          "pi:kimi-coding",
+          "kimi-code-cli",
+          ...(includeOmp ? ["omp:kimi-code"] : []),
+        ]);
+        expect(readCachedProvider("kimi")).toBeUndefined();
+        writeCachedProviders([empty], new Date(NOW).toISOString());
+        expect(readCachedProvider("kimi")).toBeUndefined();
+        const failed = await adapter(
+          cachedSource === "pi",
+          cachedSource === "cli",
+          cachedSource === "omp",
+          503,
+        ).fetchQuota(OPTIONS);
+        expect(failed.state.stale).toBe(false);
+        expect(failed.windows).toEqual([]);
+      } finally {
+        if (originalCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
+        else process.env.XDG_CACHE_HOME = originalCacheHome;
+        rmSync(cacheHome, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([
     ["omp", "pi"],
     ["pi", "omp"],
   ] as const)(
