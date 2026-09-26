@@ -14,6 +14,7 @@ import { statSync } from "node:fs";
  * stale-cache credential context identifies it.
  */
 const trace = new AsyncLocalStorage<Map<string, string>>();
+const inputPathResolvers = new Set<(identity: string) => string | undefined>();
 
 export type TracedInputs = {
   /** Every traced path, sorted. */
@@ -27,8 +28,15 @@ export type TracedInputs = {
  * Its state is captured now, before the read, so a store rewritten while the
  * reading is still in flight can never be vouched for by that reading.
  */
-export function traceInput(path: string): void {
-  trace.getStore()?.set(path, inputState(path));
+export function traceInput(path: string, identity: string = path): void {
+  trace.getStore()?.set(identity, inputState(path, identity));
+}
+
+/** Register a safe opaque input identity's current local path for revalidation. */
+export function registerInputPathResolver(
+  resolvePath: (identity: string) => string | undefined,
+): void {
+  inputPathResolvers.add(resolvePath);
 }
 
 /** Run `read` and return what it produced plus every input it traced. */
@@ -53,7 +61,15 @@ export async function withInputTrace<T>(
  * file's bytes never enter it.
  */
 export function inputsDigest(paths: readonly string[]): string {
-  return digestStates(paths.map(inputState));
+  return digestStates(
+    paths.map((identity) => {
+      const path =
+        [...inputPathResolvers]
+          .map((resolvePath) => resolvePath(identity))
+          .find((candidate) => candidate !== undefined) ?? identity;
+      return inputState(path, identity);
+    }),
+  );
 }
 
 function digestStates(states: readonly string[]): string {
@@ -62,11 +78,11 @@ function digestStates(states: readonly string[]): string {
     .digest("hex");
 }
 
-function inputState(path: string): string {
+function inputState(path: string, identity: string = path): string {
   try {
     const stats = statSync(path, { bigint: true });
     return [
-      path,
+      identity,
       stats.dev,
       stats.ino,
       stats.size,
@@ -78,6 +94,6 @@ function inputState(path: string): string {
       error && typeof error === "object" && "code" in error
         ? String(error.code)
         : "unreadable";
-    return `${path}:${code}`;
+    return `${identity}:${code}`;
   }
 }

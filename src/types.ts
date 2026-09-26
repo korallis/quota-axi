@@ -40,6 +40,14 @@ export const PROVIDER_IDS = [
 export type ProviderSource =
   | "oauth"
   | "pi:openai-codex"
+  | "pi:anthropic"
+  | "omp:anthropic"
+  | "pi:google-antigravity"
+  | "omp:google-antigravity"
+  | "omp:openai-codex"
+  | "omp:kimi-code"
+  | "omp:xai-oauth"
+  | "omp:devin"
   | `pi:openai-codex-${string}`
   | "cli-rpc"
   | "cli"
@@ -301,6 +309,7 @@ export type ProviderQuota = {
   account?: {
     email?: string;
     organization?: string;
+    organizationId?: string;
     accountId?: string;
     identityStatus?: "verified" | "unverified";
   };
@@ -310,6 +319,15 @@ export type ProviderQuota = {
     remaining?: number;
     unlimited?: boolean;
     unit?: "usd" | "cny" | "credits";
+    buckets?: {
+      id: "prompt" | "flow" | "flex";
+      used: number;
+      available: number;
+      limit?: number;
+      unit: "credits";
+      startsAt?: string;
+      resetsAt?: string;
+    }[];
   };
   state: {
     status: ProviderStatus;
@@ -398,6 +416,7 @@ export type ProviderAdapter = {
    */
   isUncertainSkip?(attempt: SourceAttempt): boolean;
   discoverAccounts?(): Promise<ProviderAccount[] | undefined>;
+  afterAccountQuotas?(reports: ProviderQuota[]): Promise<ProviderQuota[]>;
   fetchQuota(options: ProviderOptions): Promise<ProviderQuota>;
   inspectAuth(options: ProviderOptions): Promise<AuthProviderReport>;
 };

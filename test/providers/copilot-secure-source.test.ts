@@ -21,7 +21,10 @@ vi.mock("../../src/providers/gh-cli-credential.js", () => ({
   resolveGhCliCredential: vi.fn(),
 }));
 vi.mock("../../src/lib/http.js", () => ({ providerFetch: vi.fn() }));
-vi.mock("../../src/cache.js", () => ({ readCachedProvider: vi.fn() }));
+vi.mock("../../src/cache.js", async (actual) => ({
+  ...(await actual<typeof import("../../src/cache.js")>()),
+  readCachedProvider: vi.fn(),
+}));
 vi.mock("../../src/lib/fs.js", async (actual) => ({
   ...(await actual<typeof import("../../src/lib/fs.js")>()),
   readJsonFileResult: vi.fn(),

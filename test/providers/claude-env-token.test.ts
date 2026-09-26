@@ -528,7 +528,7 @@ describe("Claude CLAUDE_CODE_OAUTH_TOKEN credential source", () => {
     expect(readCachedProvider("claude")).toBeDefined();
   });
 
-  it("retains transient-before-definitive precedence for stored-only sources and does not purge the cache", async () => {
+  it("retains transient-before-definitive precedence but retires a rejected stored context", async () => {
     // On darwin both the Keychain and the .credentials.json sidecar are
     // checked; Keychain is tried first. No environment variable is set, so
     // this is a stored-only combination.
@@ -544,7 +544,8 @@ describe("Claude CLAUDE_CODE_OAUTH_TOKEN credential source", () => {
 
     // Keychain (tried first) is definitively rejected; the oauth-file sibling
     // that runs next only fails transiently, so its outcome is unresolved
-    // rather than a confirmed sign-out.
+    // rather than a confirmed sign-out. The cached Keychain context is still
+    // rejected and must not be served as stale quota.
     fetchMock.mockImplementation(async (_url: string, init: unknown) => {
       const bearer = (init as { headers: Record<string, string> }).headers
         .authorization;
@@ -554,7 +555,8 @@ describe("Claude CLAUDE_CODE_OAUTH_TOKEN credential source", () => {
     const report = await fetchQuota(options);
 
     expect(report.state.status).not.toBe("auth_required");
-    expect(readCachedProvider("claude")).toBeDefined();
+    expect(report.state.status).not.toBe("stale");
+    expect(readCachedProvider("claude")).toBeUndefined();
   });
 
   it("keeps an earlier definitive rejection ahead of a confirmed stored expiry", async () => {

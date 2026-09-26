@@ -355,22 +355,34 @@ describe("Grok consumer quota parsing", () => {
       }),
     );
 
-    expect(result.windows).toMatchObject([
-      { id: "credits", percentUsed: 0, percentRemaining: 100 },
+    expect(result.windows).toEqual([
       {
-        id: "product:grok_build",
+        id: "credits",
+        label: "week",
+        kind: "weekly",
         percentUsed: 0,
         percentRemaining: 100,
+        startsAt: "2026-07-20T20:00:00.000Z",
+        resetsAt: "2026-07-27T20:00:00.000Z",
+      },
+      {
+        id: "product:grok_build",
+        label: "Grok Build",
+        kind: "weekly",
+        percentUsed: 0,
+        percentRemaining: 100,
+        startsAt: "2026-07-20T20:00:00.000Z",
+        resetsAt: "2026-07-27T20:00:00.000Z",
       },
     ]);
     expect(result.credits).toEqual({ remaining: 0, unit: "credits" });
   });
 
-  it("pins pre-existing behaviour: prepaid zero never bounds a live weekly window, whose kind and label come from the period", () => {
+  it("keeps the shared and product limits separate from prepaid balance", () => {
     const result = normalizeGrokConsumerPayload(
       consumerPayload({
-        percentUsed: 64,
-        products: [{ product: 2, usagePercent: 64 }],
+        percentUsed: 20,
+        products: [{ product: 2, usagePercent: 100 }],
         prepaid: 0,
       }),
     );
@@ -390,22 +402,30 @@ describe("Grok consumer quota parsing", () => {
       "2026-07-23T07:05:00.000Z",
     );
 
-    expect(result.windows).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "credits",
-          label: "week",
-          kind: "weekly",
-        }),
-        expect.objectContaining({ id: "product:grok_build", kind: "weekly" }),
-      ]),
-    );
+    expect(result.windows).toEqual([
+      expect.objectContaining({
+        id: "credits",
+        label: "week",
+        kind: "weekly",
+        percentRemaining: 80,
+      }),
+      expect.objectContaining({
+        id: "product:grok_build",
+        percentRemaining: 0,
+      }),
+    ]);
     expect(result.credits).toEqual({ remaining: 0, unit: "credits" });
     expect(report.quotaSemantics?.effectiveAvailability).toContainEqual(
       expect.objectContaining({
         scope: "all_products",
-        status: "known",
-        effectivePercentRemaining: 36,
+        effectivePercentRemaining: 80,
+      }),
+    );
+    expect(report.quotaSemantics?.effectiveAvailability).toContainEqual(
+      expect.objectContaining({
+        scope: "product:grok_build",
+        effectivePercentRemaining: 0,
+        boundedBy: ["credits", "product:grok_build"],
       }),
     );
   });
@@ -418,12 +438,18 @@ describe("Grok consumer quota parsing", () => {
       }),
     );
 
-    expect(result.windows[1]).toMatchObject({
-      id: "product:unknown_99",
-      label: "Product 99",
-      kind: "monthly",
-      percentUsed: 12.5,
-    });
+    expect(result.windows).toEqual([
+      expect.objectContaining({
+        id: "credits",
+        label: "month",
+        kind: "monthly",
+      }),
+      expect.objectContaining({
+        id: "product:unknown_99",
+        kind: "monthly",
+        percentRemaining: 87.5,
+      }),
+    ]);
   });
 
   it("rejects a missing config", () => {
@@ -1487,6 +1513,38 @@ describe("Grok expired access-token classification", () => {
     expect(process.exitCode).toBe(1);
   });
 
+  it.each(["error", "throw"] as const)(
+    "keeps Grok cache without claiming sign-out when OMP resolution returns %s",
+    async (mode) => {
+      writeCachedProviders([cachedGrok("web")]);
+      const adapter = createGrokAdapter({
+        ompBroker: {
+          resolve: async () => {
+            if (mode === "throw") throw new Error("unreadable fixture store");
+            return { status: "error" as const };
+          },
+        },
+      });
+      const result = await adapter.fetchQuota({
+        allowKeychainPrompt: false,
+        refreshCredentials: false,
+      });
+
+      expect(result.state).toMatchObject({
+        status: "error",
+        error: "OMP xAI credential resolution failed",
+      });
+      expect(result.state.error).not.toMatch(/sign-in/i);
+      expect(result.attempts).toContainEqual({
+        source: "omp:xai-oauth",
+        status: "failed",
+        error: "credentials_error",
+        credentialPresent: true,
+      });
+      expect(readCachedProvider("grok")?.windows[0]?.percentRemaining).toBe(80);
+    },
+  );
+
   it("keeps the cached snapshot when the present Grok auth store cannot be parsed", async () => {
     writeCachedProviders([cachedGrok("web")]);
     mkdirSync(dirname(process.env.GROK_AUTH_JSON!), { recursive: true });
@@ -1675,6 +1733,362 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
       "pi-xai-refresh-token-fixture",
     );
   });
+
+  it.each(["available", "expired"] as const)(
+    "keeps OMP %s model auth usable without consumer quota",
+    async (status) => {
+      const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
+        url === XAI_MODELS_URL
+          ? Response.json({ data: [] })
+          : grpcResponse(new Uint8Array(), { status: 403 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const report = await createGrokAdapter({
+        ompBroker: {
+          resolve: async () =>
+            status === "expired"
+              ? {
+                  status,
+                  refreshable: true,
+                  credential: { accessToken: "synthetic-omp-access" },
+                }
+              : { status, credential: { accessToken: "synthetic-omp-access" } },
+          inspect: async () => ({ status }),
+        },
+      }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+
+      expect(report).toMatchObject({
+        source: "unavailable",
+        windows: [],
+        state: {
+          status: "unavailable",
+          authStatus: "usable",
+          error: "Grok model access available; quota unavailable",
+        },
+      });
+      expect(report.attempts?.at(-1)).toMatchObject({
+        source: "omp:xai-oauth",
+        status: "skipped",
+        error: "model_auth_probe_live",
+        degraded: false,
+      });
+      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+        CONSUMER_QUOTA_URL,
+        XAI_MODELS_URL,
+      ]);
+      const modelInit = fetchMock.mock.calls[1]?.[1] as RequestInit | undefined;
+      expect(modelInit).toMatchObject({
+        headers: {
+          Authorization: "Bearer synthetic-omp-access",
+          Accept: "application/json",
+        },
+        credentials: "omit",
+        redirect: "manual",
+      });
+      expect(modelInit?.body).toBeUndefined();
+      expect(JSON.stringify(report)).not.toContain("synthetic-omp-access");
+    },
+  );
+
+  it.each([
+    ["available", 401],
+    ["expired", 403],
+  ] as const)(
+    "requires an OMP %s bearer rejected by models after consumer HTTP %i to fail auth",
+    async (status, consumerStatus) => {
+      const fetchMock = vi.fn(async (url: string) =>
+        url === XAI_MODELS_URL
+          ? new Response(null, { status: 403 })
+          : grpcResponse(new Uint8Array(), { status: consumerStatus }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const report = await createGrokAdapter({
+        ompBroker: {
+          resolve: async () =>
+            status === "expired"
+              ? {
+                  status,
+                  refreshable: true,
+                  credential: { accessToken: "synthetic-omp-access" },
+                }
+              : { status, credential: { accessToken: "synthetic-omp-access" } },
+          inspect: async () => ({ status }),
+        },
+      }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+      expect(report.state).toMatchObject(
+        status === "expired"
+          ? {
+              status: "unavailable",
+              authStatus: "expired_refreshable",
+              error: "OMP xAI access token expired",
+            }
+          : {
+              status: "auth_required",
+              authStatus: "unusable",
+              error: "Grok sign-in required",
+            },
+      );
+      expect(report.attempts?.at(-1)).toMatchObject({
+        source: "omp:xai-oauth",
+        status: "failed",
+        error: "Grok sign-in required",
+      });
+      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+        CONSUMER_QUOTA_URL,
+        XAI_MODELS_URL,
+      ]);
+    },
+  );
+
+  it.each([
+    [429, "rate_limited", "Grok model access probe rate limited"],
+    [503, "error", "Grok model access probe unavailable"],
+    [302, "error", "Grok model access probe unavailable"],
+  ] as const)(
+    "keeps OMP model HTTP %i inconclusive rather than signed out",
+    async (modelStatus, status, error) => {
+      writeCachedProviders([cachedGrok("web")]);
+      const fetchMock = vi.fn(async (url: string) =>
+        url === XAI_MODELS_URL
+          ? new Response(null, { status: modelStatus })
+          : grpcResponse(new Uint8Array(), { status: 401 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const report = await createGrokAdapter({
+        ompBroker: {
+          resolve: async () => ({
+            status: "available",
+            credential: { accessToken: "synthetic-omp-access" },
+          }),
+          inspect: async () => ({ status: "available" }),
+        },
+      }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+      expect(report.state).toMatchObject({ status, error });
+      expect(report.state.authStatus).toBeUndefined();
+      expect(report.attempts?.at(-1)).toMatchObject({
+        source: "omp:xai-oauth",
+        status: "failed",
+        error,
+      });
+      expect(readCachedProvider("grok")?.source).toBe("web");
+      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+        CONSUMER_QUOTA_URL,
+        XAI_MODELS_URL,
+      ]);
+    },
+  );
+
+  it("keeps product bounds on the OMP consumer-credits path", async () => {
+    const payload = consumerPayload({
+      percentUsed: 20,
+      products: [{ product: 2, usagePercent: 100 }],
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => grpcResponse(payload)),
+    );
+    const report = await createGrokAdapter({
+      ompBroker: {
+        resolve: async () => ({
+          status: "available",
+          credential: { accessToken: "synthetic-omp-access" },
+        }),
+        inspect: async () => ({ status: "available" }),
+      },
+    }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+    const interpreted = withQuotaSemantics(report, "2026-07-23T07:05:00.000Z");
+    expect(report.source).toBe("omp:xai-oauth");
+    expect(report.windows.map(({ id }) => id)).toEqual([
+      "credits",
+      "product:grok_build",
+    ]);
+    expect(interpreted.quotaSemantics?.effectiveAvailability).toContainEqual(
+      expect.objectContaining({
+        scope: "product:grok_build",
+        effectivePercentRemaining: 0,
+        boundedBy: ["credits", "product:grok_build"],
+      }),
+    );
+  });
+
+  it("reports an explicit product-only OMP limit without a shared credit bound", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        grpcResponse(
+          consumerPayload({
+            includePercent: false,
+            includePeriodEnd: false,
+            includePrepaid: false,
+            products: [{ product: 2, usagePercent: 100 }],
+          }),
+        ),
+      ),
+    );
+    const report = await createGrokAdapter({
+      ompBroker: {
+        resolve: async () => ({
+          status: "available",
+          credential: { accessToken: "synthetic-omp-access" },
+        }),
+        inspect: async () => ({ status: "available" }),
+      },
+    }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+    const interpreted = withQuotaSemantics(report, "2026-07-23T07:05:00.000Z");
+
+    expect(report.source).toBe("omp:xai-oauth");
+    expect(report.state).toMatchObject({
+      status: "fresh",
+      authStatus: "usable",
+    });
+    expect(report.windows).toEqual([
+      expect.objectContaining({
+        id: "product:grok_build",
+        percentRemaining: 0,
+      }),
+    ]);
+    expect(interpreted.quotaSemantics?.effectiveAvailability).toEqual([
+      expect.objectContaining({
+        scope: "product:grok_build",
+        effectivePercentRemaining: 0,
+        boundedBy: ["product:grok_build"],
+      }),
+    ]);
+  });
+
+  it.each(["pi", "cli"] as const)(
+    "keeps $source live model auth when a separate expired OMP token is rejected",
+    async (source) => {
+      if (source === "pi") {
+        writePiXaiAuth({
+          xai: { type: "api_key", key: "pi-xai-api-key-fixture-value" },
+        });
+      } else {
+        writeAuth({
+          "https://auth.x.ai::fixture-client": {
+            key: "cli-model-token",
+            auth_mode: "oidc",
+            expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+          },
+        });
+      }
+      writeCachedProviders([cachedGrok("web")]);
+      const fetchMock = vi.fn(async (url: string) =>
+        url === GROK_BUILD_MODELS_URL
+          ? new Response(JSON.stringify({ data: [] }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            })
+          : grpcResponse(new Uint8Array(), { status: 403 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const report = await createGrokAdapter({
+        ompBroker: {
+          resolve: async () => ({
+            status: "expired",
+            credential: { accessToken: "expired-omp-token" },
+            refreshable: true,
+          }),
+          inspect: async () => ({ status: "expired" }),
+        },
+      }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+
+      expect(report).toMatchObject({
+        source: "unavailable",
+        windows: [],
+        state: {
+          status: "unavailable",
+          authStatus: "usable",
+          error: "Grok model access available; quota unavailable",
+        },
+      });
+      expect(report.attempts).toContainEqual(
+        expect.objectContaining({ source: "omp:xai-oauth", status: "failed" }),
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(source === "cli" ? 4 : 2);
+      expect(readCachedProvider("grok")?.windows[0]?.percentRemaining).toBe(80);
+      expect(JSON.stringify(report)).not.toContain("expired-omp-token");
+    },
+  );
+
+  it("names OMP-owned refreshable expiry without attributing it to Pi", async () => {
+    const fetchMock = vi.fn(async () =>
+      grpcResponse(new Uint8Array(), { status: 403 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const report = await createGrokAdapter({
+      ompBroker: {
+        resolve: async () => ({
+          status: "expired",
+          credential: { accessToken: "expired-omp-token" },
+          refreshable: true,
+        }),
+        inspect: async () => ({ status: "expired" }),
+      },
+    }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+
+    expect(report.state).toMatchObject({
+      status: "unavailable",
+      authStatus: "expired_refreshable",
+      error: "OMP xAI access token expired",
+    });
+    expect(report.state.remedyCommand).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(report)).not.toContain("expired-omp-token");
+  });
+
+  it.each([
+    "timeout",
+    "rate_limit",
+    "server_error",
+    "invalid_response",
+  ] as const)(
+    "keeps an unrelated CLI cache on a transient OMP $failure",
+    async (failure) => {
+      writeCachedProviders([cachedGrok("web")]);
+      const fetchMock = vi.fn(async () => {
+        if (failure === "timeout") {
+          const error = new Error("offline");
+          error.name = "AbortError";
+          throw error;
+        }
+        if (failure === "rate_limit")
+          return grpcResponse(new Uint8Array(), {
+            status: 429,
+            headers: { "retry-after": "45" },
+          });
+        if (failure === "server_error")
+          return grpcResponse(new Uint8Array(), { status: 503 });
+        return grpcResponse(new Uint8Array());
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const report = await createGrokAdapter({
+        ompBroker: {
+          resolve: async () => ({
+            status: "available",
+            credential: { accessToken: "synthetic-omp-access" },
+          }),
+          inspect: async () => ({ status: "available" }),
+        },
+      }).fetchQuota({ allowKeychainPrompt: false, refreshCredentials: false });
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(report.source).toBe("unavailable");
+      expect(report.windows).toEqual([]);
+      expect(report.state).toMatchObject({
+        status: failure === "rate_limit" ? "rate_limited" : "error",
+        stale: false,
+      });
+      expect(report.state.authStatus).toBeUndefined();
+      if (failure === "rate_limit")
+        expect(report.state.retryAfter).toBeDefined();
+      expect(report.attempts).toContainEqual(
+        expect.objectContaining({ source: "omp:xai-oauth", status: "failed" }),
+      );
+      expect(readCachedProvider("grok")?.windows[0]?.percentRemaining).toBe(80);
+      expect(JSON.stringify(report)).not.toContain("synthetic-omp-access");
+    },
+  );
 
   it("keeps an invalid CLI store degraded when Pi returns quota", async () => {
     writeAuth({ invalid: { type: "api_key", key: "ignored" } });
@@ -2858,10 +3272,15 @@ describe("Grok dual-source CLI and Pi xAI usability", () => {
         source: "auth-json",
         path: process.env.GROK_AUTH_JSON,
         status: "available",
+        error: undefined,
       },
       {
         source: "pi:xai",
         status: "available",
+      },
+      {
+        source: "omp:xai-oauth",
+        status: "missing",
       },
     ]);
   });
@@ -2980,8 +3399,8 @@ describe("Grok CLI rendering regression", () => {
     });
 
     const toon = await captureCli(["--provider", "grok", "--full"]);
-    expect(toon).toContain("grok,credits,week,100");
-    expect(toon).not.toContain("grok,credits,week,unknown");
+    expect(toon).toContain("grok,all_products,100");
+    expect(toon).not.toContain("grok,all_products,unknown");
     expect(await captureCli(["--provider", "grok"])).toContain(
       "grok,all_products,100",
     );

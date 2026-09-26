@@ -142,13 +142,10 @@ export async function readBoundedResponseBody(
   response: Response,
   signal: AbortSignal,
   fail: (code: string) => Error,
+  maxBytes: number = PROVIDER_RESPONSE_LIMIT_BYTES,
 ): Promise<Uint8Array> {
   const declared = response.headers.get("content-length")?.trim();
-  if (
-    declared &&
-    /^\d+$/.test(declared) &&
-    Number(declared) > PROVIDER_RESPONSE_LIMIT_BYTES
-  ) {
+  if (declared && /^\d+$/.test(declared) && Number(declared) > maxBytes) {
     await response.body?.cancel().catch(() => undefined);
     throw fail("response_too_large");
   }
@@ -162,8 +159,7 @@ export async function readBoundedResponseBody(
       const result = await reader.read();
       if (result.done) break;
       length += result.value.byteLength;
-      if (length > PROVIDER_RESPONSE_LIMIT_BYTES)
-        throw fail("response_too_large");
+      if (length > maxBytes) throw fail("response_too_large");
       chunks.push(result.value);
     }
   } finally {
