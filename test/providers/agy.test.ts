@@ -27,7 +27,6 @@ import {
   writeCachedProviders,
 } from "../../src/cache.js";
 import {
-  AGY_NOT_RUNNING,
   fetchQuota,
   fetchQuotaWithRuntime,
   inspectAuthWithRuntime,
@@ -468,6 +467,72 @@ describe("Antigravity provider", () => {
     },
   );
 
+  it("keeps a Pi outage ahead of OMP sign-out with and without a matching cache", async () => {
+    let piFresh = false;
+    const fetchMock = vi.fn(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        const authorization = new Headers(init?.headers).get("authorization");
+        return authorization === "Bearer pi-access"
+          ? piFresh
+            ? Response.json({
+                groups: [
+                  {
+                    buckets: [
+                      {
+                        bucketId: "gemini-5h",
+                        remainingFraction: 0.6,
+                        resetTime: new Date(
+                          Date.now() + 3_600_000,
+                        ).toISOString(),
+                      },
+                    ],
+                  },
+                ],
+              })
+            : new Response(null, { status: 503 })
+          : new Response(null, { status: 401 });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const runtime = {
+      ...runtimeWith({}),
+      resolvePiAntigravity: async () => ({
+        status: "available" as const,
+        credential: { accessToken: "pi-access", projectId: "pi-project" },
+      }),
+      resolveOmpAntigravity: async () => ({
+        status: "available" as const,
+        credential: { accessToken: "omp-access", projectId: "omp-project" },
+      }),
+    };
+    const withoutCache = await fetchQuotaWithRuntime(runtime);
+    expect(withoutCache.state).toMatchObject({
+      status: "unavailable",
+      error: "Antigravity quota endpoint returned HTTP 503",
+    });
+    expect(withoutCache.windows).toEqual([]);
+    piFresh = true;
+    const fresh = await fetchQuotaWithRuntime(runtime);
+    expect(fresh.source).toBe("pi:google-antigravity");
+    writeCachedProviders([fresh]);
+    piFresh = false;
+    const stale = await fetchQuotaWithRuntime(runtime);
+    expect(stale.state).toMatchObject({
+      status: "stale",
+      error: "Antigravity quota endpoint returned HTTP 503",
+    });
+    expect(stale.windows).toEqual(fresh.windows);
+    expect(readCachedProvider("agy")?.source).toBe("pi:google-antigravity");
+    expect(stale.attempts?.slice(-2)).toMatchObject([
+      { source: "pi:google-antigravity", status: "failed" },
+      {
+        source: "omp:google-antigravity",
+        status: "failed",
+        error: "Antigravity sign-in required",
+      },
+    ]);
+  });
+
   it("does not reuse Pi quota for another Pi credential or OMP", async () => {
     const runtime = (accessToken: string): AgyProbeRuntime => ({
       ...runtimeWith({}),
@@ -762,6 +827,39 @@ describe("Antigravity provider", () => {
       { id: "model:gemini_test", kind: "model", percentRemaining: 41 },
     ]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses OMP model quota after summary authentication rejection", async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) =>
+      String(url).endsWith("retrieveUserQuotaSummary")
+        ? new Response(null, { status: 401 })
+        : Response.json({
+            models: {
+              "gemini-test": {
+                quotaInfo: { remainingFraction: 0.41 },
+              },
+            },
+          }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const report = await fetchQuotaWithRuntime({
+      ...runtimeWith({}),
+      resolveOmpAntigravity: async () => ({
+        status: "available",
+        credential: {
+          accessToken: "synthetic-antigravity-access",
+          projectId: "synthetic-project",
+        },
+      }),
+    });
+    expect(report).toMatchObject({
+      source: "omp:google-antigravity",
+      state: { status: "fresh", stale: false },
+      windows: [{ id: "model:gemini_test", percentRemaining: 41 }],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    writeCachedProviders([report]);
+    expect(readCachedProvider("agy")?.source).toBe("omp:google-antigravity");
   });
 
   it.each([
@@ -1177,12 +1275,83 @@ describe("Antigravity provider", () => {
   });
 
   it.each([
-    { summaryStatus: 429, modelsStatus: 401 },
-    { summaryStatus: 401, modelsStatus: 503 },
-    { summaryStatus: 200, modelsStatus: 403 },
+    [401, 403, false],
+    [403, 401, false],
+    [401, 403, true],
+    [403, 401, true],
+  ] as const)(
+    "classifies OMP summary HTTP %i and models HTTP %i with refreshable=%s",
+    async (summaryStatus, modelsStatus, refreshable) => {
+      writeCachedProviders([cachedOmpAgyQuota()]);
+      const fetchMock = vi.fn(
+        async (url: string | URL | Request) =>
+          new Response(null, {
+            status: String(url).endsWith("retrieveUserQuotaSummary")
+              ? summaryStatus
+              : modelsStatus,
+          }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const report = await fetchQuotaWithRuntime({
+        ...runtimeWith({}),
+        resolveOmpAntigravity: async () =>
+          refreshable
+            ? {
+                status: "expired" as const,
+                refreshable: true,
+                credential: {
+                  accessToken: "synthetic-antigravity-access",
+                  projectId: "synthetic-project",
+                },
+              }
+            : {
+                status: "available" as const,
+                credential: {
+                  accessToken: "synthetic-antigravity-access",
+                  projectId: "synthetic-project",
+                },
+              },
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(report.state).toMatchObject(
+        refreshable
+          ? { status: "stale", authStatus: "expired_refreshable" }
+          : { status: "auth_required", error: "Antigravity sign-in required" },
+      );
+      expect(readCachedProvider("agy")?.source).toBe(
+        refreshable ? "omp:google-antigravity" : undefined,
+      );
+    },
+  );
+
+  it.each([
+    {
+      summaryStatus: 429,
+      modelsStatus: 401,
+      status: "rate_limited",
+      error: "Antigravity quota endpoint rate limited",
+    },
+    {
+      summaryStatus: 401,
+      modelsStatus: 503,
+      status: "unavailable",
+      error: "Antigravity quota endpoint returned HTTP 503",
+    },
+    {
+      summaryStatus: 200,
+      modelsStatus: 403,
+      status: "unavailable",
+      error: "Antigravity quota endpoint returned HTTP 403",
+    },
+    {
+      summaryStatus: 401,
+      modelsStatus: 200,
+      status: "unavailable",
+      error: "Antigravity quota unavailable",
+    },
   ])(
-    "scopes cache retirement after OMP summary $summaryStatus and models $modelsStatus",
-    async ({ summaryStatus, modelsStatus }) => {
+    "keeps OMP summary $summaryStatus and models $modelsStatus inconclusive",
+    async ({ summaryStatus, modelsStatus, status, error }) => {
       const fetchMock = vi.fn(
         async (url: string | URL | Request, init?: RequestInit) => {
           expect(new Headers(init?.headers).get("authorization")).toBe(
@@ -1192,10 +1361,25 @@ describe("Antigravity provider", () => {
             ? summaryStatus === 200
               ? Response.json({ groups: [] })
               : new Response(null, { status: summaryStatus })
-            : new Response(null, { status: modelsStatus });
+            : modelsStatus === 200
+              ? Response.json({ models: {} })
+              : new Response(null, { status: modelsStatus });
         },
       );
       vi.stubGlobal("fetch", fetchMock);
+      const runtime = {
+        ...runtimeWith({}),
+        resolveOmpAntigravity: async () => ({
+          status: "available" as const,
+          credential: {
+            accessToken: "synthetic-antigravity-access",
+            projectId: "synthetic-project",
+          },
+        }),
+      };
+      const noCache = await fetchQuotaWithRuntime(runtime);
+      expect(noCache.state).toMatchObject({ status, error });
+      expect(noCache.windows).toEqual([]);
       for (const source of ["cli-rpc", "omp:google-antigravity"] as const) {
         const snapshot =
           source === "omp:google-antigravity"
@@ -1203,41 +1387,75 @@ describe("Antigravity provider", () => {
             : cachedAgyQuota();
         writeCachedProviders([snapshot]);
         fetchMock.mockClear();
-        const result = await fetchQuotaWithRuntime({
-          ...runtimeWith({}),
-          async resolveOmpAntigravity() {
-            return {
-              status: "available" as const,
-              credential: {
-                accessToken: "synthetic-antigravity-access",
-                projectId: "synthetic-project",
-              },
-            };
-          },
-        });
+        const result = await fetchQuotaWithRuntime(runtime);
 
         expect(fetchMock).toHaveBeenCalledTimes(2);
-        expect(result.state).toMatchObject(
-          source === "cli-rpc"
-            ? { status: "stale", stale: true, error: AGY_NOT_RUNNING }
-            : {
-                status: "auth_required",
-                error: "Antigravity sign-in required",
-              },
-        );
-        expect(result.windows).toHaveLength(source === "cli-rpc" ? 1 : 0);
+        expect(result.state).toMatchObject({
+          status: "stale",
+          stale: true,
+          error,
+        });
+        expect(result.windows).toHaveLength(1);
         expect(result.attempts?.at(-1)).toMatchObject({
           source: "omp:google-antigravity",
           status: "failed",
-          error: "Antigravity sign-in required",
+          error,
         });
-        expect(readCachedProvider("agy")?.source).toBe(
-          source === "cli-rpc" ? "cli-rpc" : undefined,
-        );
+        expect(readCachedProvider("agy")?.source).toBe(source);
         expect(JSON.stringify(result)).not.toContain(
           "synthetic-antigravity-access",
         );
       }
+    },
+  );
+
+  it.each([
+    {
+      source: "cli" as const,
+      options: {
+        cliQuota: Object.assign(new Error("synthetic CLI timeout"), {
+          code: "ETIMEDOUT",
+        }),
+      },
+      error: "Antigravity CLI /quota timed out",
+    },
+    {
+      source: "cli-rpc" as const,
+      options: {
+        ps: "123 /Users/test/.local/bin/agy\n",
+        lsof: lsofFor(123, 64440),
+        requestJson: async () => {
+          throw new Error("ECONNRESET");
+        },
+      },
+      error: "ECONNRESET",
+    },
+  ])(
+    "keeps a $source outage ahead of an OMP rejection",
+    async ({ source, options, error }) => {
+      const fetchMock = vi.fn(async () => new Response(null, { status: 401 }));
+      vi.stubGlobal("fetch", fetchMock);
+      const runtime = {
+        ...runtimeWith(options),
+        resolveOmpAntigravity: async () => ({
+          status: "available" as const,
+          credential: {
+            accessToken: "synthetic-antigravity-access",
+            projectId: "synthetic-project",
+          },
+        }),
+      };
+      const withoutCache = await fetchQuotaWithRuntime(runtime);
+      expect(withoutCache.state).toMatchObject({
+        status: "unavailable",
+        error,
+      });
+      writeCachedProviders([{ ...cachedAgyQuota(), source }]);
+      const stale = await fetchQuotaWithRuntime(runtime);
+      expect(stale.state).toMatchObject({ status: "stale", error });
+      expect(stale.windows).toHaveLength(1);
+      expect(readCachedProvider("agy")?.source).toBe(source);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
     },
   );
 

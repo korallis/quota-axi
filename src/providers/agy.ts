@@ -318,6 +318,31 @@ export async function fetchQuotaWithRuntime(
       (ompFailure instanceof AgyRefreshableExpiryError && ompFailure) ||
       finalFailure;
   }
+  const nativeOutage =
+    attempts[0].error !== AGY_CLI_NOT_INSTALLED &&
+    !isDefinitiveAuthFailure(cliFailure)
+      ? cliFailure
+      : attempts[1].error !== AGY_NOT_RUNNING &&
+          !isDefinitiveAuthFailure(loopbackFailure)
+        ? loopbackFailure
+        : undefined;
+  if (
+    !cachedRejected ||
+    (cached?.source !== "cli" && cached?.source !== "cli-rpc")
+  ) {
+    if (
+      nativeOutage &&
+      (isDefinitiveAuthFailure(piFailure) ||
+        isDefinitiveAuthFailure(ompFailure))
+    )
+      finalFailure = nativeOutage;
+    else if (
+      piFailure &&
+      !isDefinitiveAuthFailure(piFailure) &&
+      isDefinitiveAuthFailure(ompFailure)
+    )
+      finalFailure = piFailure;
+  }
   const finalError = errorMessage(finalFailure);
   if (cachedRejected) {
     try {
@@ -1475,12 +1500,14 @@ async function fetchOmpAntigravityQuota(
 
   const account = email ? { email } : undefined;
   let summaryFailure: Error | undefined;
+  let summaryAnswered = false;
   try {
     const summary = await requestOmpAntigravityJson(
       `${OMP_ANTIGRAVITY_BASE_URL}${OMP_ANTIGRAVITY_QUOTA_PATH}`,
       accessToken,
       projectId,
     );
+    summaryAnswered = true;
     const normalized = normalizeAgyQuotaSummary(summary);
     if (normalized && normalized.windows.length > 0) {
       return { ...normalized, account };
@@ -1495,29 +1522,39 @@ async function fetchOmpAntigravityQuota(
         : new Error("Antigravity quota unavailable");
   }
 
+  let modelsAnswered = false;
   try {
     const models = await requestOmpAntigravityJson(
       `${OMP_ANTIGRAVITY_BASE_URL}${OMP_ANTIGRAVITY_MODELS_PATH}`,
       accessToken,
       projectId,
     );
+    modelsAnswered = true;
     const windows = normalizeOmpAntigravityModels(models);
     if (windows.length > 0) return { windows, refreshedAt: nowIso(), account };
   } catch (error) {
-    if (
-      isDefinitiveAuthFailure(error) ||
-      (!isDefinitiveAuthFailure(summaryFailure) &&
-        (!summaryFailure ||
-          (staleEligibleFailure(error) &&
-            (!staleEligibleFailure(summaryFailure) ||
-              failureRank(error) > failureRank(summaryFailure)))))
+    const modelFailure =
+      error instanceof Error
+        ? error
+        : new Error("Antigravity quota unavailable");
+    if (isDefinitiveAuthFailure(summaryFailure)) {
+      summaryFailure = modelFailure;
+    } else if (isDefinitiveAuthFailure(modelFailure)) {
+      if (summaryAnswered && modelFailure instanceof AgyHttpError)
+        summaryFailure = new AgyUnavailableError(
+          `Antigravity quota endpoint returned HTTP ${modelFailure.status}`,
+        );
+    } else if (
+      !summaryFailure ||
+      (staleEligibleFailure(modelFailure) &&
+        (!staleEligibleFailure(summaryFailure) ||
+          failureRank(modelFailure) > failureRank(summaryFailure)))
     ) {
-      summaryFailure =
-        error instanceof Error
-          ? error
-          : new Error("Antigravity quota unavailable");
+      summaryFailure = modelFailure;
     }
   }
+  if (modelsAnswered && isDefinitiveAuthFailure(summaryFailure))
+    throw new AgyUnavailableError("Antigravity quota unavailable");
   throw summaryFailure ?? new Error("Antigravity quota unavailable");
 }
 
