@@ -678,6 +678,7 @@ async function attemptClaudeQuota(
   let definitiveFailureCredential: ClaudeCredentials | undefined;
   let transientFailureCredential: ClaudeCredentials | undefined;
   let confirmedExpiryCredential: ClaudeCredentials | undefined;
+  const rejectedContexts = new Map<string, ClaudeCredentials["source"]>();
 
   if (credentialCandidates.length > 0) {
     for (const state of credentialCandidates) {
@@ -765,6 +766,13 @@ async function attemptClaudeQuota(
           }
           transientFailureIsEnv = true;
           break;
+        }
+        if (failure.definitiveAuth && credential.source !== "env") {
+          const contextId = claudeFailureContextId(
+            credential.source,
+            credential.cacheIdentity,
+          );
+          if (contextId) rejectedContexts.set(contextId, credential.source);
         }
         if (softRefreshable || failure.definitiveAuth) {
           // A stored-expired session that still carries a refresh token is
@@ -897,6 +905,30 @@ async function attemptClaudeQuota(
     failure = new ClaudeFailure(keychainFailure.source.error!, {
       staleEligible: true,
     });
+  }
+
+  // A later transient can become the final verdict, but it does not revive an
+  // earlier rejected credential's snapshot. A blocked Keychain read, however,
+  // cannot establish that its sidecar represents the selected live session.
+  for (const [contextId, source] of rejectedContexts) {
+    if (
+      keychainFailure &&
+      source !== "pi:anthropic" &&
+      source !== "omp:anthropic"
+    )
+      continue;
+    try {
+      retireCachedClaudeContext(contextId);
+      if (
+        source !== "pi:anthropic" &&
+        source !== "omp:anthropic" &&
+        claudeEnvOauthToken() !== undefined
+      ) {
+        retireCachedClaudeContext(claudeCredentialContextId(undefined, false));
+      }
+    } catch {
+      // A blocked cache write cannot change the current vendor verdict.
+    }
   }
 
   const failureCredential =
