@@ -506,6 +506,7 @@ QUOTA_AXI_CLAUDE_PROFILES="$HOME/.claude-work:$HOME/.claude-team" quota-axi --pr
 After a provider's lanes have been read, collection coalesces readings that share a provider-supported subscription identity.
 That identity is `account.accountId` when it is present and not marked `identityStatus: unverified`; Claude narrows it to that account in the organization the bearer is scoped to, and a Claude reading without an organization has no comparable identity.
 Email, token, credential path, profile label, and runner name do not establish equality or distinctness.
+One named exception: a pooled Codex row read through [CLIProxyAPI](#cliproxyapi-pools) narrows its verified `accountId` (the ChatGPT workspace id, shared by every seat of a Team or Business workspace) to the seat the vendor response names, by its `user_id`, or by the response's own email when it names no `user_id`. Two such rows coalesce only when both the workspace id and that seat match; a response that names no seat stays unverified, and the auth file's email never counts.
 Missing or incomparable identity stays its own lane so the uncertainty stays visible: quota-axi does not guess a merge, and it does not invent extra capacity by summing those lanes.
 A successful response that supplies comparable identity missing from the local store is enough to coalesce the resulting cards.
 When two readings share an identity, the usable one is published (fresh over stale over a rejected source) and the other is not a second card.
