@@ -279,7 +279,7 @@ async function readUpstream(
           "unavailable",
           account,
         );
-      const profileAccount = await upstreamCall(
+      const profile = await upstreamCall(
         config,
         authIndex,
         CLAUDE_PROFILE_URL,
@@ -289,13 +289,15 @@ async function readUpstream(
           accept: "application/json",
         },
       ).then(
-        (profile) =>
-          succeeded(profile.status)
-            ? normalizeClaudeProfile(profile.body)
-            : undefined,
+        (response) => (succeeded(response.status) ? response.body : undefined),
         () => undefined,
       );
-      return {
+      const profileAccount = normalizeClaudeProfile(profile);
+      const organizationId = text(
+        (profile as { organization?: { uuid?: unknown } } | undefined)
+          ?.organization?.uuid,
+      );
+      const quota: ProviderQuota = {
         ...successProvider({
           provider,
           label: "Claude",
@@ -315,6 +317,8 @@ async function readUpstream(
         }),
         accountKey: key,
       };
+      stampSubscriptionScope(quota, organizationId ?? null);
+      return quota;
     }
     let normalized;
     let usageBody: unknown;

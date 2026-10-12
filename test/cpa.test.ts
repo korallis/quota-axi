@@ -662,6 +662,68 @@ describe("CLIProxyAPI provider", () => {
     ]);
   });
 
+  it("folds pooled Claude accounts only within one organization", async () => {
+    const organizations: Record<string, string | undefined> = {
+      "claude-1": "org-personal",
+      "claude-2": "org-personal",
+      "claude-3": "org-team",
+      "claude-4": undefined,
+      "claude-5": undefined,
+    };
+    const usage: Record<string, number> = {
+      "claude-1": 90,
+      "claude-2": 90,
+      "claude-3": 10,
+      "claude-4": 50,
+      "claude-5": 50,
+    };
+    const fake = await fakeServer(
+      Object.keys(organizations).map((authIndex) => ({
+        auth_index: authIndex,
+        provider: "claude",
+        email: "a@example.test",
+      })),
+      (call) => {
+        const organization = organizations[call.auth_index];
+        return {
+          status_code: 200,
+          body: call.url.includes("/usage")
+            ? {
+                five_hour: {
+                  utilization: usage[call.auth_index],
+                  resets_at: "2030-01-01T01:00:00Z",
+                },
+              }
+            : {
+                account: { uuid: "uuid-shared" },
+                ...(organization
+                  ? { organization: { uuid: organization } }
+                  : {}),
+              },
+        };
+      },
+    );
+    const adapter = createCpaAdapter(
+      "claude",
+      fallbackAdapter("claude"),
+      () => ({
+        baseUrl: fake.baseUrl,
+        key: randomUUID(),
+      }),
+    );
+
+    const rows = await fetchAccountQuotas(adapter, options);
+
+    expect(
+      rows.map((row) => [row.accountKeys, row.windows[0]?.percentRemaining]),
+    ).toEqual([
+      [["cpa-claude-1", "cpa-claude-2"], 10],
+      [["cpa-claude-3"], 90],
+      [["cpa-claude-4"], 50],
+      [["cpa-claude-5"], 50],
+    ]);
+  });
+
   it("keeps two seats of one ChatGPT workspace as separate rows", async () => {
     const seats: Record<string, { user_id: string; used: number }> = {
       "seat-a": { user_id: "user-a", used: 90 },
@@ -1081,7 +1143,10 @@ describe("CLIProxyAPI provider", () => {
       status_code: 200,
       body: call.url.includes("/usage")
         ? CLAUDE_USAGE
-        : { account: { uuid: "uuid-shared" } },
+        : {
+            account: { uuid: "uuid-shared" },
+            organization: { uuid: "org-shared" },
+          },
     }));
     const adapter = createCpaAdapter(
       "claude",
@@ -1117,7 +1182,10 @@ describe("CLIProxyAPI provider", () => {
                 status_code: 200,
                 body: call.url.includes("/usage")
                   ? CLAUDE_USAGE
-                  : { account: { uuid: "uuid-shared" } },
+                  : {
+                      account: { uuid: "uuid-shared" },
+                      organization: { uuid: "org-shared" },
+                    },
               },
       );
       const adapter = createCpaAdapter(
